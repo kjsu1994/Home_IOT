@@ -1,0 +1,30 @@
+# Compose and local runtime data
+/IOT compose/
+*.log
+logs/
+
+# IDE and OS files
+/.idea/
+/.vscode/
+/.DS_Store
+Thumbs.db
+
+# Backend build artifacts
+/backend/server/.gradle/
+/backend/server/build/
+/backend/server/out/
+
+# Frontend build artifacts
+/client/api-client-ui/node_modules/
+/client/api-client-ui/dist/
+
+# Local environment files
+*.env
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
