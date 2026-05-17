@@ -20,7 +20,8 @@ public class TelemetryEvent {
     @Column(name = "event_type", nullable = false, length = 80)
     private String eventType;
 
-    @Column(name = "payload_json", columnDefinition = "TEXT")
+    @Lob
+    @Column(name = "payload_json")
     private String payloadJson;
 
     @Column(name = "created_at", nullable = false)

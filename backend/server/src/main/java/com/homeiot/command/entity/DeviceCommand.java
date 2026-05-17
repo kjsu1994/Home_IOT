@@ -20,7 +20,8 @@ public class DeviceCommand {
     @Column(name = "command_type", nullable = false, length = 80)
     private String commandType;
 
-    @Column(name = "payload_json", columnDefinition = "TEXT")
+    @Lob
+    @Column(name = "payload_json")
     private String payloadJson;
 
     @Enumerated(EnumType.STRING)

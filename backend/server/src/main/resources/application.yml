@@ -21,6 +21,7 @@ mqtt:
   client-id: home-iot-server
   username: ''
   password: ''
+  command-mode: mock
 
 app:
   cors:

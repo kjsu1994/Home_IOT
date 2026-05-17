@@ -55,6 +55,9 @@ public class DeviceStateService {
         } else if (Boolean.FALSE.equals(request.ledOn())) {
             markLatestCommandApplied(deviceId, "LED_OFF");
         }
+        if (request.rawStateJson() != null && request.rawStateJson().contains("\"led_mode\":\"STATUS\"")) {
+            markLatestCommandApplied(deviceId, "NETWORK_STATUS");
+        }
 
         return new DeviceStateResponse(
                 deviceId,

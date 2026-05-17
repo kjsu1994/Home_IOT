@@ -2,9 +2,11 @@ package com.homeiot.mqtt.publisher;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(name = "mqtt.command-mode", havingValue = "mock", matchIfMissing = true)
 public class LoggingDeviceMqttPublisher implements DeviceMqttPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingDeviceMqttPublisher.class);

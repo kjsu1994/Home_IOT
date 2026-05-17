@@ -28,7 +28,8 @@ public class DeviceState {
     @Column(name = "last_reported_at", nullable = false)
     private OffsetDateTime lastReportedAt;
 
-    @Column(name = "raw_state_json", columnDefinition = "TEXT")
+    @Lob
+    @Column(name = "raw_state_json")
     private String rawStateJson;
 
     @Column(name = "created_at", nullable = false, updatable = false)

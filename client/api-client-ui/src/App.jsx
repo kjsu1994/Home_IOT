@@ -18,7 +18,7 @@ export default function App() {
       setLoading(true)
       setError('')
       const response = await fetchJson('/api/devices')
-      setDevices(response.data ?? [])
+      setDevices((response.data ?? []).map(normalizeDevice))
     } catch (err) {
       setError(err.message || '장치 목록을 불러오지 못했습니다.')
     } finally {
@@ -115,6 +115,11 @@ export default function App() {
                   onClick={() => sendCommand(device.deviceId, 'LED_OFF')}
                 />
                 <CommandButton
+                  busy={busyKey === `${device.deviceId}:NETWORK_STATUS`}
+                  label="네트워크 상태"
+                  onClick={() => sendCommand(device.deviceId, 'NETWORK_STATUS')}
+                />
+                <CommandButton
                   busy={busyKey === `${device.deviceId}:REBOOT`}
                   label="REBOOT"
                   onClick={() => sendCommand(device.deviceId, 'REBOOT')}
@@ -126,6 +131,19 @@ export default function App() {
       </section>
     </main>
   )
+}
+
+function normalizeDevice(device) {
+  return {
+    deviceId: device.deviceId ?? device.device_id ?? '',
+    name: device.name ?? '',
+    deviceType: device.deviceType ?? device.device_type ?? '',
+    fwVersion: device.fwVersion ?? device.fw_version ?? '',
+    ip: device.ip ?? '',
+    rssi: device.rssi ?? null,
+    online: device.online ?? false,
+    lastSeenAt: device.lastSeenAt ?? device.last_seen_at ?? '',
+  }
 }
 
 function CommandButton({ busy, label, onClick }) {

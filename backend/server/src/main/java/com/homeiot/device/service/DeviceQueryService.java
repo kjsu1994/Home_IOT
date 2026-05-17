@@ -11,11 +11,14 @@ import com.homeiot.device.repository.DeviceStateRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 @Service
 @Transactional(readOnly = true)
 public class DeviceQueryService {
+    private static final Duration OFFLINE_AFTER = Duration.ofSeconds(90);
 
     private final DeviceRepository deviceRepository;
     private final DeviceStateRepository deviceStateRepository;
@@ -59,7 +62,7 @@ public class DeviceQueryService {
                 device.getFwVersion(),
                 device.getIp(),
                 device.getRssi(),
-                device.isOnline(),
+                isOnline(device),
                 device.getLastSeenAt()
         );
     }
@@ -72,9 +75,16 @@ public class DeviceQueryService {
                 device.getFwVersion(),
                 device.getIp(),
                 device.getRssi(),
-                device.isOnline(),
+                isOnline(device),
                 device.getLastSeenAt()
         );
+    }
+
+    private boolean isOnline(Device device) {
+        if (!device.isOnline() || device.getLastSeenAt() == null) {
+            return false;
+        }
+        return device.getLastSeenAt().isAfter(OffsetDateTime.now().minus(OFFLINE_AFTER));
     }
 
     private DeviceStateResponse toStateResponse(String deviceId, DeviceState state) {
