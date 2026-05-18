@@ -2,6 +2,7 @@
 /IOT compose/
 *.log
 logs/
+/ESP32S3/
 
 # IDE and OS files
 /.idea/
