@@ -1,13 +1,17 @@
 package com.homeiot;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import static org.hamcrest.Matchers.hasItem;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -15,6 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@WithMockUser(username = "admin", roles = "ADMIN")
 class DeviceApiIntegrationTest {
 
     @Autowired
@@ -45,6 +50,57 @@ class DeviceApiIntegrationTest {
     }
 
     @Test
+    void shouldUpdateDeviceMetadataAndKeepItAfterRegistrationRefresh() throws Exception {
+        mockMvc.perform(post("/api/devices/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "device_id": "esp32s3-meta",
+                                  "name": "factory board name",
+                                  "device_type": "ESP32_S3",
+                                  "fw_version": "0.1.0",
+                                  "ip": "192.168.123.140",
+                                  "rssi": -58
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/devices/esp32s3-meta/metadata")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "display_name": "거실 메인 보드",
+                                  "room": "거실"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.name").value("거실 메인 보드"))
+                .andExpect(jsonPath("$.data.display_name").value("거실 메인 보드"))
+                .andExpect(jsonPath("$.data.room").value("거실"));
+
+        mockMvc.perform(post("/api/devices/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "device_id": "esp32s3-meta",
+                                  "name": "factory board name",
+                                  "device_type": "ESP32_S3",
+                                  "fw_version": "0.1.1",
+                                  "ip": "192.168.123.141",
+                                  "rssi": -57
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/devices/esp32s3-meta"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.name").value("거실 메인 보드"))
+                .andExpect(jsonPath("$.data.display_name").value("거실 메인 보드"))
+                .andExpect(jsonPath("$.data.room").value("거실"))
+                .andExpect(jsonPath("$.data.fw_version").value("0.1.1"));
+    }
+
+    @Test
     void shouldUpdateHealthReportStateAndCreateCommand() throws Exception {
         mockMvc.perform(post("/api/devices/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -72,7 +128,7 @@ class DeviceApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
-        mockMvc.perform(post("/api/devices/esp32s3-002/commands")
+        MvcResult commandResult = mockMvc.perform(post("/api/devices/esp32s3-002/commands")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -82,7 +138,24 @@ class DeviceApiIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.command_type").value("LED_ON"))
-                .andExpect(jsonPath("$.data.status").value("SENT"));
+                .andExpect(jsonPath("$.data.status").value("SENT"))
+                .andReturn();
+        Integer commandId = JsonPath.read(commandResult.getResponse().getContentAsString(), "$.data.command_id");
+
+        mockMvc.perform(get("/api/devices/esp32s3-002/commands/pending"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.command_type").value("LED_ON"));
+
+        mockMvc.perform(patch("/api/devices/esp32s3-002/commands/" + commandId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "stage": "RECEIVED",
+                                  "result_message": "polled by device"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("RECEIVED"));
 
         mockMvc.perform(post("/api/devices/esp32s3-002/state/report")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -151,5 +224,18 @@ class DeviceApiIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("ota event recorded"));
+
+        mockMvc.perform(post("/api/devices/esp32s3-003/ota/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "ota_status": "RUNNING",
+                                  "progress_percent": 30,
+                                  "message": "ota in progress",
+                                  "target_version": "0.2.1"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("ota status recorded"));
     }
 }

@@ -9,6 +9,8 @@ import java.time.OffsetDateTime;
 public record DeviceDetailResponse(
         String deviceId,
         String name,
+        String displayName,
+        String room,
         String deviceType,
         String fwVersion,
         String ip,

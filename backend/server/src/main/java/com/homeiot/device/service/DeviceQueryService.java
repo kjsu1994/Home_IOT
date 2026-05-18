@@ -57,7 +57,9 @@ public class DeviceQueryService {
     private DeviceResponse toDeviceResponse(Device device) {
         return new DeviceResponse(
                 device.getDeviceId(),
-                device.getName(),
+                device.getEffectiveName(),
+                device.getDisplayName(),
+                device.getRoom(),
                 device.getDeviceType(),
                 device.getFwVersion(),
                 device.getIp(),
@@ -70,7 +72,9 @@ public class DeviceQueryService {
     private DeviceDetailResponse toDeviceDetailResponse(Device device) {
         return new DeviceDetailResponse(
                 device.getDeviceId(),
-                device.getName(),
+                device.getEffectiveName(),
+                device.getDisplayName(),
+                device.getRoom(),
                 device.getDeviceType(),
                 device.getFwVersion(),
                 device.getIp(),

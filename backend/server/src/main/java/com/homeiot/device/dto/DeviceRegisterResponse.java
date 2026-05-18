@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
 public record DeviceRegisterResponse(
         String deviceId,
         boolean registered,
+        String deviceApiKey,
         String message
 ) {
 }

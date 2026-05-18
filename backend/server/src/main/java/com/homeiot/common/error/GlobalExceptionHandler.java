@@ -16,6 +16,12 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.fail(exception.getMessage()));
     }
 
+    @ExceptionHandler(UnauthorizedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnauthorized(UnauthorizedException exception) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.fail(exception.getMessage()));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException exception) {
         String message = exception.getBindingResult().getFieldErrors().stream()
@@ -24,6 +30,11 @@ public class GlobalExceptionHandler {
                 .orElse("validation failed");
 
         return ResponseEntity.badRequest().body(ApiResponse.fail(message));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException exception) {
+        return ResponseEntity.badRequest().body(ApiResponse.fail(exception.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)

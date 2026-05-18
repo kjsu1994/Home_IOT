@@ -3,6 +3,7 @@ package com.homeiot.device.controller;
 import com.homeiot.common.dto.ApiResponse;
 import com.homeiot.device.dto.DeviceDetailResponse;
 import com.homeiot.device.dto.DeviceHealthRequest;
+import com.homeiot.device.dto.DeviceMetadataUpdateRequest;
 import com.homeiot.device.dto.DeviceRegisterRequest;
 import com.homeiot.device.dto.DeviceRegisterResponse;
 import com.homeiot.device.dto.DeviceResponse;
@@ -13,10 +14,12 @@ import com.homeiot.device.service.DeviceService;
 import com.homeiot.device.service.DeviceStateService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -38,8 +41,10 @@ public class DeviceController {
     }
 
     @PostMapping("/register")
-    public ApiResponse<DeviceRegisterResponse> register(@Valid @RequestBody DeviceRegisterRequest request) {
-        return ApiResponse.ok(deviceService.register(request));
+    public ApiResponse<DeviceRegisterResponse> register(
+            @RequestHeader(name = "X-Device-Api-Key", required = false) String presentedKey,
+            @Valid @RequestBody DeviceRegisterRequest request) {
+        return ApiResponse.ok(deviceService.register(request, presentedKey));
     }
 
     @GetMapping
@@ -50,6 +55,12 @@ public class DeviceController {
     @GetMapping("/{deviceId}")
     public ApiResponse<DeviceDetailResponse> getDevice(@PathVariable String deviceId) {
         return ApiResponse.ok(deviceQueryService.getDevice(deviceId));
+    }
+
+    @PatchMapping("/{deviceId}/metadata")
+    public ApiResponse<DeviceDetailResponse> updateMetadata(@PathVariable String deviceId,
+                                                            @RequestBody DeviceMetadataUpdateRequest request) {
+        return ApiResponse.ok(deviceService.updateMetadata(deviceId, request));
     }
 
     @GetMapping("/{deviceId}/state")

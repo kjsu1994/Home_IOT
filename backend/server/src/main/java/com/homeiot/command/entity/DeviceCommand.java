@@ -60,6 +60,14 @@ public class DeviceCommand {
         this.failureReason = null;
     }
 
+    public void markReceived() {
+        this.status = CommandStatus.RECEIVED;
+        if (this.sentAt == null) {
+            this.sentAt = OffsetDateTime.now();
+        }
+        this.failureReason = null;
+    }
+
     public void markApplied() {
         this.status = CommandStatus.APPLIED;
         this.appliedAt = OffsetDateTime.now();

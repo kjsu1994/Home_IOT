@@ -28,6 +28,18 @@ public class Device {
     @Column(name = "device_name", nullable = false, length = 120)
     private String name;
 
+    @Column(name = "display_name", length = 120)
+    private String displayName;
+
+    @Column(name = "room", length = 80)
+    private String room;
+
+    @Column(name = "device_api_key_hash", length = 128)
+    private String deviceApiKeyHash;
+
+    @Column(name = "device_api_key_issued_at")
+    private OffsetDateTime deviceApiKeyIssuedAt;
+
     @Column(name = "device_type", nullable = false, length = 80)
     private String deviceType;
 
@@ -91,6 +103,23 @@ public class Device {
         this.lastSeenAt = OffsetDateTime.now();
     }
 
+    public void updateMetadata(String displayName, String room) {
+        this.displayName = normalizeBlank(displayName);
+        this.room = normalizeBlank(room);
+    }
+
+    public void updateDeviceApiKeyHash(String deviceApiKeyHash) {
+        this.deviceApiKeyHash = deviceApiKeyHash;
+        this.deviceApiKeyIssuedAt = OffsetDateTime.now();
+    }
+
+    private String normalizeBlank(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
     public void updateHealth(Boolean online, String ip, Integer rssi) {
         if (online != null) {
             this.online = online;
@@ -114,6 +143,26 @@ public class Device {
 
     public String getName() {
         return name;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public String getEffectiveName() {
+        return displayName == null ? name : displayName;
+    }
+
+    public String getRoom() {
+        return room;
+    }
+
+    public String getDeviceApiKeyHash() {
+        return deviceApiKeyHash;
+    }
+
+    public OffsetDateTime getDeviceApiKeyIssuedAt() {
+        return deviceApiKeyIssuedAt;
     }
 
     public String getDeviceType() {

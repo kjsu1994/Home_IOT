@@ -2,6 +2,7 @@ package com.homeiot.command.controller;
 
 import com.homeiot.command.dto.DeviceCommandCreateRequest;
 import com.homeiot.command.dto.DeviceCommandResponse;
+import com.homeiot.command.dto.DeviceCommandStageRequest;
 import com.homeiot.command.service.CommandService;
 import com.homeiot.common.dto.ApiResponse;
 import jakarta.validation.Valid;
@@ -28,5 +29,17 @@ public class CommandController {
     @GetMapping
     public ApiResponse<List<DeviceCommandResponse>> getCommands(@PathVariable String deviceId) {
         return ApiResponse.ok(commandService.getCommands(deviceId));
+    }
+
+    @GetMapping("/pending")
+    public ApiResponse<DeviceCommandResponse> getPendingCommand(@PathVariable String deviceId) {
+        return ApiResponse.ok(commandService.getPendingCommand(deviceId).orElse(null));
+    }
+
+    @PatchMapping("/{commandId}")
+    public ApiResponse<DeviceCommandResponse> updateCommandStage(@PathVariable String deviceId,
+                                                                 @PathVariable Long commandId,
+                                                                 @Valid @RequestBody DeviceCommandStageRequest request) {
+        return ApiResponse.ok(commandService.updateCommandStage(deviceId, commandId, request));
     }
 }

@@ -1,0 +1,32 @@
+services:
+  home-iot-backend:
+    build:
+      context: ../backend/server
+      dockerfile: Dockerfile
+    environment:
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS}
+      MQTT_BROKER_URL: ${MQTT_BROKER_URL}
+      MQTT_CLIENT_ID: ${MQTT_CLIENT_ID}
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      MQTT_COMMAND_MODE: ${MQTT_COMMAND_MODE}
+      APP_DEVICE_API_KEY: ${APP_DEVICE_API_KEY}
+      APP_ADMIN_USERNAME: ${APP_ADMIN_USERNAME}
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD}
+    expose:
+      - "8080"
+
+  home-iot-frontend:
+    build:
+      context: ../client/api-client-ui
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE_PATH: /iot/
+        VITE_API_BASE_PATH: /iot-api
+    expose:
+      - "80"
+    depends_on:
+      - home-iot-backend
