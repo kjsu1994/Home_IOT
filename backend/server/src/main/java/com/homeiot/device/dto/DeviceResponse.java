@@ -16,6 +16,8 @@ public record DeviceResponse(
         String ip,
         Integer rssi,
         boolean online,
-        OffsetDateTime lastSeenAt
+        OffsetDateTime lastSeenAt,
+        OffsetDateTime createdAt,
+        boolean shareManager
 ) {
 }

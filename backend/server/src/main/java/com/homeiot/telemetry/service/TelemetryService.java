@@ -1,5 +1,6 @@
 package com.homeiot.telemetry.service;
 
+import com.homeiot.auth.service.OwnershipService;
 import com.homeiot.common.error.NotFoundException;
 import com.homeiot.device.entity.Device;
 import com.homeiot.device.repository.DeviceRepository;
@@ -18,10 +19,14 @@ public class TelemetryService {
 
     private final DeviceRepository deviceRepository;
     private final TelemetryEventRepository telemetryEventRepository;
+    private final OwnershipService ownershipService;
 
-    public TelemetryService(DeviceRepository deviceRepository, TelemetryEventRepository telemetryEventRepository) {
+    public TelemetryService(DeviceRepository deviceRepository,
+                            TelemetryEventRepository telemetryEventRepository,
+                            OwnershipService ownershipService) {
         this.deviceRepository = deviceRepository;
         this.telemetryEventRepository = telemetryEventRepository;
+        this.ownershipService = ownershipService;
     }
 
     @Transactional
@@ -33,9 +38,9 @@ public class TelemetryService {
     }
 
     public List<TelemetryEventResponse> getLatest(String deviceId) {
-        if (deviceRepository.findByDeviceId(deviceId).isEmpty()) {
-            throw new NotFoundException("device not found: " + deviceId);
-        }
+        Device device = deviceRepository.findByDeviceId(deviceId)
+                .orElseThrow(() -> new NotFoundException("device not found: " + deviceId));
+        ownershipService.requireDeviceAccess(device);
         return telemetryEventRepository.findTop50ByDeviceDeviceIdOrderByCreatedAtDesc(deviceId).stream()
                 .map(this::toResponse)
                 .toList();

@@ -1,10 +1,14 @@
 package com.homeiot.device.entity;
 
+import com.homeiot.member.entity.DeviceOwnerMarker;
+import com.homeiot.member.entity.Member;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -16,7 +20,7 @@ import java.time.OffsetDateTime;
 @Table(name = "devices", uniqueConstraints = {
         @UniqueConstraint(name = "uk_devices_device_id", columnNames = "device_id")
 })
-public class Device {
+public class Device implements DeviceOwnerMarker {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -39,6 +43,10 @@ public class Device {
 
     @Column(name = "device_api_key_issued_at")
     private OffsetDateTime deviceApiKeyIssuedAt;
+
+    @ManyToOne
+    @JoinColumn(name = "owner_member_id")
+    private Member owner;
 
     @Column(name = "device_type", nullable = false, length = 80)
     private String deviceType;
@@ -108,6 +116,18 @@ public class Device {
         this.room = normalizeBlank(room);
     }
 
+    public void assignOwner(Member owner) {
+        if (this.owner == null) {
+            this.owner = owner;
+        }
+    }
+
+    public void unassignOwnerIf(Member member) {
+        if (this.owner != null && member != null && this.owner.getId().equals(member.getId())) {
+            this.owner = null;
+        }
+    }
+
     public void updateDeviceApiKeyHash(String deviceApiKeyHash) {
         this.deviceApiKeyHash = deviceApiKeyHash;
         this.deviceApiKeyIssuedAt = OffsetDateTime.now();
@@ -163,6 +183,15 @@ public class Device {
 
     public OffsetDateTime getDeviceApiKeyIssuedAt() {
         return deviceApiKeyIssuedAt;
+    }
+
+    public Member getOwner() {
+        return owner;
+    }
+
+    @Override
+    public Long ownerId() {
+        return owner == null ? null : owner.getId();
     }
 
     public String getDeviceType() {

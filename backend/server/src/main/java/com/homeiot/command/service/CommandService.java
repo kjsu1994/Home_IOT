@@ -1,5 +1,6 @@
 package com.homeiot.command.service;
 
+import com.homeiot.auth.service.OwnershipService;
 import com.homeiot.command.dto.DeviceCommandCreateRequest;
 import com.homeiot.command.dto.DeviceCommandResponse;
 import com.homeiot.command.dto.DeviceCommandStageRequest;
@@ -29,19 +30,23 @@ public class CommandService {
     private final DeviceRepository deviceRepository;
     private final DeviceCommandRepository deviceCommandRepository;
     private final DeviceMqttPublisher deviceMqttPublisher;
+    private final OwnershipService ownershipService;
 
     public CommandService(DeviceRepository deviceRepository,
                           DeviceCommandRepository deviceCommandRepository,
-                          DeviceMqttPublisher deviceMqttPublisher) {
+                          DeviceMqttPublisher deviceMqttPublisher,
+                          OwnershipService ownershipService) {
         this.deviceRepository = deviceRepository;
         this.deviceCommandRepository = deviceCommandRepository;
         this.deviceMqttPublisher = deviceMqttPublisher;
+        this.ownershipService = ownershipService;
     }
 
     @Transactional
     public DeviceCommandResponse createCommand(String deviceId, DeviceCommandCreateRequest request) {
         Device device = deviceRepository.findByDeviceId(deviceId)
                 .orElseThrow(() -> new NotFoundException("device not found: " + deviceId));
+        ownershipService.requireDeviceAccess(device);
 
         DeviceCommand command = new DeviceCommand(device, request.commandType(), request.payloadJson());
         deviceCommandRepository.save(command);
@@ -63,9 +68,9 @@ public class CommandService {
     }
 
     public List<DeviceCommandResponse> getCommands(String deviceId) {
-        if (deviceRepository.findByDeviceId(deviceId).isEmpty()) {
-            throw new NotFoundException("device not found: " + deviceId);
-        }
+        Device device = deviceRepository.findByDeviceId(deviceId)
+                .orElseThrow(() -> new NotFoundException("device not found: " + deviceId));
+        ownershipService.requireDeviceAccess(device);
         return deviceCommandRepository.findByDeviceDeviceIdOrderByRequestedAtDesc(deviceId).stream()
                 .map(this::toResponse)
                 .toList();

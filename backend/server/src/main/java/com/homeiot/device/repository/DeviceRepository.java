@@ -9,4 +9,6 @@ import java.util.Optional;
 public interface DeviceRepository extends JpaRepository<Device, Long> {
     Optional<Device> findByDeviceId(String deviceId);
     List<Device> findAllByOrderByCreatedAtAsc();
+    List<Device> findAllByOwner_IdOrderByCreatedAtAsc(Long ownerId);
 }
+

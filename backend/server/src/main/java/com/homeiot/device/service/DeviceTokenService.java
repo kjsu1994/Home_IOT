@@ -12,11 +12,20 @@ import java.util.Base64;
 @Service
 public class DeviceTokenService {
     private static final int TOKEN_BYTES = 32;
+    private static final int CLAIM_TOKEN_BYTES = 18;
 
     private final SecureRandom secureRandom = new SecureRandom();
 
     public String generateToken() {
-        byte[] tokenBytes = new byte[TOKEN_BYTES];
+        return generateUrlToken(TOKEN_BYTES);
+    }
+
+    public String generateClaimToken() {
+        return generateUrlToken(CLAIM_TOKEN_BYTES);
+    }
+
+    private String generateUrlToken(int byteLength) {
+        byte[] tokenBytes = new byte[byteLength];
         secureRandom.nextBytes(tokenBytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
     }

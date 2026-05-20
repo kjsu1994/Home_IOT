@@ -1,18 +1,15 @@
 package com.homeiot.common.config;
 
-import org.springframework.beans.factory.annotation.Value;
+import com.homeiot.auth.filter.JwtAuthenticationFilter;
+import com.homeiot.auth.oauth2.CustomOAuth2UserService;
+import com.homeiot.auth.oauth2.OAuth2SuccessHandler;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
@@ -20,20 +17,37 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @EnableWebSecurity
 public class SecurityConfig {
     private final DeviceApiKeyFilter deviceApiKeyFilter;
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final CustomOAuth2UserService customOAuth2UserService;
+    private final OAuth2SuccessHandler oAuth2SuccessHandler;
 
-    public SecurityConfig(DeviceApiKeyFilter deviceApiKeyFilter) {
+    public SecurityConfig(DeviceApiKeyFilter deviceApiKeyFilter,
+                          JwtAuthenticationFilter jwtAuthenticationFilter,
+                          CustomOAuth2UserService customOAuth2UserService,
+                          OAuth2SuccessHandler oAuth2SuccessHandler) {
         this.deviceApiKeyFilter = deviceApiKeyFilter;
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.customOAuth2UserService = customOAuth2UserService;
+        this.oAuth2SuccessHandler = oAuth2SuccessHandler;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
-                .httpBasic(Customizer.withDefaults())
+                .httpBasic(basic -> basic.disable())
                 .formLogin(form -> form.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(exception -> exception.authenticationEntryPoint((request, response, authException) -> {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType("application/json");
+                    response.getWriter().write("{\"success\":false,\"data\":null,\"message\":\"login required\"}");
+                }))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers("/api/auth/login", "/api/auth/reissue", "/api/auth/password-reset/**").permitAll()
+                        .requestMatchers("/api/members", "/api/members/**").permitAll()
+                        .requestMatchers("/api/oauth2/**", "/api/login/oauth2/**", "/oauth2/**", "/login/oauth2/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/devices/register").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/devices/*/health").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/devices/*/state/report").permitAll()
@@ -42,26 +56,17 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/devices/*/ota/status").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/devices/*/commands/pending").permitAll()
                         .requestMatchers(HttpMethod.PATCH, "/api/devices/*/commands/*").permitAll()
-                        .requestMatchers("/api/auth/**").authenticated()
-                        .requestMatchers("/api/**").authenticated()
+                        .requestMatchers("/api/**").hasAnyRole("USER", "MASTER")
                         .anyRequest().permitAll())
-                .addFilterBefore(deviceApiKeyFilter, UsernamePasswordAuthenticationFilter.class);
+                .oauth2Login(oauth -> oauth
+                        .authorizationEndpoint(endpoint -> endpoint.baseUri("/api/oauth2/authorization"))
+                        .redirectionEndpoint(endpoint -> endpoint.baseUri("/api/login/oauth2/code/*"))
+                        .userInfoEndpoint(userInfo -> userInfo.userService(customOAuth2UserService))
+                        .successHandler(oAuth2SuccessHandler))
+                .addFilterBefore(deviceApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
-    @Bean
-    public UserDetailsService userDetailsService(@Value("${app.admin.username}") String username,
-                                                 @Value("${app.admin.password}") String password,
-                                                 PasswordEncoder passwordEncoder) {
-        return new InMemoryUserDetailsManager(User.withUsername(username)
-                .password(passwordEncoder.encode(password))
-                .roles("ADMIN")
-                .build());
-    }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
 }

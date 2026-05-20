@@ -19,7 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@WithMockUser(username = "admin", roles = "ADMIN")
+@WithMockUser(username = "master@homeiot.local", roles = "MASTER")
 class DeviceApiIntegrationTest {
 
     @Autowired
