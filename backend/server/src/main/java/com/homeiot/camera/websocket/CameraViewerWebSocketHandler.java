@@ -40,7 +40,9 @@ public class CameraViewerWebSocketHandler extends BinaryWebSocketHandler {
         session.setBinaryMessageSizeLimit(CAMERA_MESSAGE_SIZE_LIMIT_BYTES);
 
         ViewerSession viewerSession = new ViewerSession(session);
+        AutoCloseable viewerRegistration = cameraService.registerViewer(deviceId);
         AutoCloseable subscription = cameraService.addFrameListener(deviceId, viewerSession::offer);
+        session.getAttributes().put("viewerRegistration", viewerRegistration);
         session.getAttributes().put("subscription", subscription);
         session.getAttributes().put("viewerSession", viewerSession);
     }
@@ -53,6 +55,10 @@ public class CameraViewerWebSocketHandler extends BinaryWebSocketHandler {
         }
         Object subscription = session.getAttributes().get("subscription");
         if (subscription instanceof AutoCloseable closeable) {
+            closeable.close();
+        }
+        Object viewerRegistration = session.getAttributes().get("viewerRegistration");
+        if (viewerRegistration instanceof AutoCloseable closeable) {
             closeable.close();
         }
     }

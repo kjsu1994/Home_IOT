@@ -1,6 +1,7 @@
 package com.homeiot.camera.controller;
 
 import com.homeiot.camera.dto.CameraDeviceResponse;
+import com.homeiot.camera.dto.CameraControlResponse;
 import com.homeiot.camera.dto.CameraRecordingResponse;
 import com.homeiot.camera.dto.CameraStatusRequest;
 import com.homeiot.camera.dto.CameraStreamTokenResponse;
@@ -80,5 +81,10 @@ public class CameraController {
                                           @Valid @RequestBody CameraStatusRequest request) {
         cameraService.updateStatus(deviceId, request);
         return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/devices/{deviceId}/camera/control")
+    public ApiResponse<CameraControlResponse> control(@PathVariable String deviceId) {
+        return ApiResponse.ok(cameraService.control(deviceId));
     }
 }

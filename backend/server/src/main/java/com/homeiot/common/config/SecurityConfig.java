@@ -57,6 +57,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/devices/*/camera/frame").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/devices/*/camera/status").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/devices/*/camera/ws").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/devices/*/camera/control").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/devices/*/commands/pending").permitAll()
                         .requestMatchers(HttpMethod.PATCH, "/api/devices/*/commands/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/cameras/*/mjpeg").permitAll()

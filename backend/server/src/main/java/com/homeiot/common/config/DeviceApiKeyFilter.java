@@ -28,6 +28,7 @@ public class DeviceApiKeyFilter extends OncePerRequestFilter {
             "/camera/status"
     );
     private static final Pattern PENDING_COMMAND_PATH = Pattern.compile("^/api/devices/[^/]+/commands/pending$");
+    private static final Pattern CAMERA_CONTROL_PATH = Pattern.compile("^/api/devices/[^/]+/camera/control$");
     private static final Pattern COMMAND_STAGE_PATH = Pattern.compile("^/api/devices/[^/]+/commands/\\d+$");
     private static final Pattern DEVICE_ID_PATH = Pattern.compile("^/api/devices/([^/]+)/.*$");
 
@@ -68,6 +69,9 @@ public class DeviceApiKeyFilter extends OncePerRequestFilter {
             return true;
         }
         if ("GET".equals(method) && PENDING_COMMAND_PATH.matcher(path).matches()) {
+            return true;
+        }
+        if ("GET".equals(method) && CAMERA_CONTROL_PATH.matcher(path).matches()) {
             return true;
         }
         return "PATCH".equals(method) && COMMAND_STAGE_PATH.matcher(path).matches();

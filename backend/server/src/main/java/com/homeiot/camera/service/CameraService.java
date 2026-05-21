@@ -2,6 +2,7 @@ package com.homeiot.camera.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homeiot.auth.service.OwnershipService;
+import com.homeiot.camera.dto.CameraControlResponse;
 import com.homeiot.camera.dto.CameraDeviceResponse;
 import com.homeiot.camera.dto.CameraRecordingResponse;
 import com.homeiot.camera.dto.CameraStatusRequest;
@@ -37,6 +38,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 @Service
@@ -47,6 +49,12 @@ public class CameraService {
     private static final Duration INGEST_FPS_WINDOW = Duration.ofSeconds(10);
     private static final Duration INGEST_LOG_INTERVAL = Duration.ofSeconds(10);
     private static final String MJPEG_BOUNDARY = "homeiotframe";
+    private static final long LIVE_UPLOAD_INTERVAL_MS = 100;
+    private static final long IDLE_UPLOAD_INTERVAL_MS = 3000;
+    private static final int LIVE_JPEG_QUALITY = 28;
+    private static final int IDLE_JPEG_QUALITY = 35;
+    private static final String LIVE_FRAME_SIZE = "VGA";
+    private static final String IDLE_FRAME_SIZE = "QVGA";
 
     private final DeviceRepository deviceRepository;
     private final DeviceShareRepository deviceShareRepository;
@@ -56,6 +64,7 @@ public class CameraService {
     private final Map<String, CameraRuntime> runtimes = new ConcurrentHashMap<>();
     private final Map<String, StreamToken> streamTokens = new ConcurrentHashMap<>();
     private final Map<String, CopyOnWriteArraySet<Consumer<CameraFramePayload>>> frameListeners = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> viewerCounts = new ConcurrentHashMap<>();
 
     public CameraService(DeviceRepository deviceRepository,
                          DeviceShareRepository deviceShareRepository,
@@ -99,7 +108,15 @@ public class CameraService {
 
     public StreamingResponseBody streamMjpeg(String deviceId, String token) {
         validateStreamToken(deviceId, token);
-        return outputStream -> writeMjpegStream(deviceId, token, outputStream);
+        return outputStream -> {
+            try (AutoCloseable ignored = registerViewer(deviceId)) {
+                writeMjpegStream(deviceId, token, outputStream);
+            } catch (IOException ignored) {
+                // Browser navigations and stream fallback switches close the socket normally.
+            } catch (Exception exception) {
+                throw new IOException("failed to close camera viewer", exception);
+            }
+        };
     }
 
     public boolean isValidStreamToken(String deviceId, String token) {
@@ -126,6 +143,35 @@ public class CameraService {
                 frameListeners.remove(deviceId, listeners);
             }
         };
+    }
+
+    public AutoCloseable registerViewer(String deviceId) {
+        AtomicInteger counter = viewerCounts.computeIfAbsent(deviceId, ignored -> new AtomicInteger());
+        counter.incrementAndGet();
+        return () -> {
+            int nextCount = counter.updateAndGet(value -> Math.max(0, value - 1));
+            if (nextCount == 0) {
+                viewerCounts.remove(deviceId, counter);
+            }
+        };
+    }
+
+    public CameraControlResponse control(String deviceId) {
+        CameraRuntime runtime = runtime(deviceId);
+        int viewerCount = viewerCount(deviceId);
+        boolean recording;
+        synchronized (runtime) {
+            recording = runtime.activeRecording != null;
+        }
+        boolean live = viewerCount > 0 || recording;
+        return new CameraControlResponse(
+                live ? "LIVE" : "IDLE",
+                live ? LIVE_UPLOAD_INTERVAL_MS : IDLE_UPLOAD_INTERVAL_MS,
+                live ? LIVE_JPEG_QUALITY : IDLE_JPEG_QUALITY,
+                live ? LIVE_FRAME_SIZE : IDLE_FRAME_SIZE,
+                viewerCount,
+                recording
+        );
     }
 
     public void acceptFrame(String deviceId, byte[] jpegBytes, Integer width, Integer height) {
@@ -401,6 +447,11 @@ public class CameraService {
 
     private CameraRuntime runtime(String deviceId) {
         return runtimes.computeIfAbsent(deviceId, ignored -> new CameraRuntime());
+    }
+
+    private int viewerCount(String deviceId) {
+        AtomicInteger counter = viewerCounts.get(deviceId);
+        return counter == null ? 0 : Math.max(0, counter.get());
     }
 
     private void validateStreamToken(String deviceId, String token) {
