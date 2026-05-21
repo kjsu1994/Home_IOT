@@ -31,6 +31,9 @@ public class DeviceClaimToken {
     @Column(name = "token_hash", nullable = false, length = 128)
     private String tokenHash;
 
+    @Column(name = "token_value", length = 128)
+    private String tokenValue;
+
     @Column(name = "expires_at", nullable = false)
     private OffsetDateTime expiresAt;
 
@@ -55,12 +58,17 @@ public class DeviceClaimToken {
     }
 
     public DeviceClaimToken(Device device, String tokenHash, OffsetDateTime expiresAt) {
-        this(device, tokenHash, expiresAt, null);
+        this(device, tokenHash, null, expiresAt, null);
     }
 
     public DeviceClaimToken(Device device, String tokenHash, OffsetDateTime expiresAt, Member createdBy) {
+        this(device, tokenHash, null, expiresAt, createdBy);
+    }
+
+    public DeviceClaimToken(Device device, String tokenHash, String tokenValue, OffsetDateTime expiresAt, Member createdBy) {
         this.device = device;
         this.tokenHash = tokenHash;
+        this.tokenValue = tokenValue;
         this.expiresAt = expiresAt;
         this.createdBy = createdBy;
     }
@@ -81,11 +89,13 @@ public class DeviceClaimToken {
     public void markUsed(Member member) {
         this.usedAt = OffsetDateTime.now();
         this.usedBy = member;
+        this.tokenValue = null;
     }
 
     public void revoke() {
         if (this.revokedAt == null && this.usedAt == null) {
             this.revokedAt = OffsetDateTime.now();
+            this.tokenValue = null;
         }
     }
 
@@ -99,6 +109,10 @@ public class DeviceClaimToken {
 
     public String getTokenHash() {
         return tokenHash;
+    }
+
+    public String getTokenValue() {
+        return tokenValue;
     }
 
     public OffsetDateTime getExpiresAt() {

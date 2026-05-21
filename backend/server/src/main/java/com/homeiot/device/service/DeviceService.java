@@ -8,15 +8,18 @@ import com.homeiot.device.dto.DeviceClaimTokenHistoryResponse;
 import com.homeiot.device.dto.DeviceClaimTokenResponse;
 import com.homeiot.device.dto.DeviceDetailResponse;
 import com.homeiot.device.dto.DeviceMetadataUpdateRequest;
+import com.homeiot.device.dto.DevicePreferenceUpdateRequest;
 import com.homeiot.device.dto.DeviceRegisterRequest;
 import com.homeiot.device.dto.DeviceRegisterResponse;
 import com.homeiot.device.dto.DeviceShareAssignRequest;
 import com.homeiot.device.dto.DeviceShareResponse;
 import com.homeiot.device.entity.Device;
 import com.homeiot.device.entity.DeviceClaimToken;
+import com.homeiot.device.entity.DeviceMemberPreference;
 import com.homeiot.device.entity.DeviceShare;
 import com.homeiot.device.entity.DeviceShareInvite;
 import com.homeiot.device.repository.DeviceClaimTokenRepository;
+import com.homeiot.device.repository.DeviceMemberPreferenceRepository;
 import com.homeiot.device.repository.DeviceRepository;
 import com.homeiot.device.repository.DeviceShareInviteRepository;
 import com.homeiot.device.repository.DeviceShareRepository;
@@ -44,35 +47,41 @@ public class DeviceService {
     private static final Duration SHARE_INVITE_TTL = Duration.ofDays(14);
 
     private final DeviceRepository deviceRepository;
+    private final DeviceMemberPreferenceRepository preferenceRepository;
     private final DeviceShareRepository deviceShareRepository;
     private final DeviceShareInviteRepository deviceShareInviteRepository;
     private final DeviceClaimTokenRepository deviceClaimTokenRepository;
     private final MemberRepository memberRepository;
     private final JavaMailSender javaMailSender;
     private final DeviceTokenService deviceTokenService;
+    private final DeviceAuditService deviceAuditService;
     private final OwnershipService ownershipService;
     private final String bootstrapApiKey;
     private final String senderAddress;
     private final String publicBaseUrl;
 
     public DeviceService(DeviceRepository deviceRepository,
+                         DeviceMemberPreferenceRepository preferenceRepository,
                          DeviceShareRepository deviceShareRepository,
                          DeviceShareInviteRepository deviceShareInviteRepository,
                          DeviceClaimTokenRepository deviceClaimTokenRepository,
                          MemberRepository memberRepository,
                          JavaMailSender javaMailSender,
                          DeviceTokenService deviceTokenService,
+                         DeviceAuditService deviceAuditService,
                          OwnershipService ownershipService,
                          @Value("${app.device-api-key:}") String bootstrapApiKey,
                          @Value("${mail.address.master:no-reply@homeiot.local}") String senderAddress,
                          @Value("${app.public-base-url:https://ctfmon.shop}") String publicBaseUrl) {
         this.deviceRepository = deviceRepository;
+        this.preferenceRepository = preferenceRepository;
         this.deviceShareRepository = deviceShareRepository;
         this.deviceShareInviteRepository = deviceShareInviteRepository;
         this.deviceClaimTokenRepository = deviceClaimTokenRepository;
         this.memberRepository = memberRepository;
         this.javaMailSender = javaMailSender;
         this.deviceTokenService = deviceTokenService;
+        this.deviceAuditService = deviceAuditService;
         this.ownershipService = ownershipService;
         this.bootstrapApiKey = bootstrapApiKey == null ? "" : bootstrapApiKey.trim();
         this.senderAddress = senderAddress;
@@ -127,9 +136,18 @@ public class DeviceService {
         Device device = findDevice(deviceId);
         ownershipService.requireDeviceManager(device);
         Member createdBy = ownershipService.currentMember();
+        OffsetDateTime now = OffsetDateTime.now();
+        Optional<DeviceClaimToken> reusableToken = deviceClaimTokenRepository
+                .findFirstByDevice_DeviceIdAndUsedAtIsNullAndRevokedAtIsNullAndExpiresAtAfterAndTokenValueIsNotNullOrderByCreatedAtDesc(deviceId, now);
+        if (reusableToken.isPresent()) {
+            DeviceClaimToken token = reusableToken.get();
+            return new DeviceClaimTokenResponse(device.getDeviceId(), token.getTokenValue(), token.getExpiresAt());
+        }
+
         String token = deviceTokenService.generateClaimToken();
-        OffsetDateTime expiresAt = OffsetDateTime.now().plus(CLAIM_TOKEN_TTL);
-        deviceClaimTokenRepository.save(new DeviceClaimToken(device, deviceTokenService.hashToken(token), expiresAt, createdBy));
+        OffsetDateTime expiresAt = now.plus(CLAIM_TOKEN_TTL);
+        deviceClaimTokenRepository.save(new DeviceClaimToken(device, deviceTokenService.hashToken(token), token, expiresAt, createdBy));
+        deviceAuditService.record(device, createdBy, "CLAIM_QR_ISSUED", null, "Claim QR issued");
         return new DeviceClaimTokenResponse(device.getDeviceId(), token, expiresAt);
     }
 
@@ -148,6 +166,7 @@ public class DeviceService {
         DeviceClaimToken token = deviceClaimTokenRepository.findByIdAndDevice_DeviceId(tokenId, deviceId)
                 .orElseThrow(() -> new NotFoundException("claim token not found: " + tokenId));
         token.revoke();
+        deviceAuditService.recordCurrentActor(token.getDevice(), "CLAIM_QR_REVOKED", String.valueOf(token.getId()), "Claim QR revoked");
         return toClaimTokenHistoryResponse(token, OffsetDateTime.now());
     }
 
@@ -169,8 +188,8 @@ public class DeviceService {
                     owner.getId(),
                     owner.getEmail(),
                     owner.getName(),
-                    "OWNER",
-                    "OWNER",
+                    DeviceShare.ROLE_OWNER,
+                    DeviceShare.ROLE_OWNER,
                     "ACTIVE",
                     true,
                     true,
@@ -187,21 +206,27 @@ public class DeviceService {
         ownershipService.requireDeviceManager(device);
         Member inviter = ownershipService.currentMember();
         DeviceShare.Source source = ownershipService.isMaster() ? DeviceShare.Source.ADMIN : DeviceShare.Source.FAMILY;
+        String role = DeviceShare.normalizeRole(request.role());
         String email = normalizeEmail(request.email());
         Optional<Member> maybeMember = memberRepository.findByEmail(email)
                 .filter(candidate -> candidate.getStatus() == Member.Status.ACTIVE);
 
         if (maybeMember.isEmpty()) {
             DeviceShareInvite invite = deviceShareInviteRepository.findByDeviceAndEmailAndAcceptedAtIsNullAndRevokedAtIsNull(device, email)
-                    .orElseGet(() -> deviceShareInviteRepository.save(new DeviceShareInvite(device, email, "USER", source, inviter, OffsetDateTime.now().plus(SHARE_INVITE_TTL))));
+                    .orElseGet(() -> deviceShareInviteRepository.save(new DeviceShareInvite(device, email, role, source, inviter, OffsetDateTime.now().plus(SHARE_INVITE_TTL))));
             sendShareInviteMail(invite);
+            deviceAuditService.record(device, inviter, "SHARE_INVITED", email, "Share invitation sent with role " + invite.getRole());
             return toInviteResponse(invite);
         }
 
         Member member = maybeMember.get();
         DeviceShare share = deviceShareRepository.findByDevice_DeviceIdAndMember_Id(deviceId, member.getId())
-                .orElseGet(() -> deviceShareRepository.save(new DeviceShare(device, member, "USER", source)));
-        device.assignOwner(member);
+                .orElseGet(() -> deviceShareRepository.save(new DeviceShare(device, member, role, source)));
+        share.updateRole(role);
+        if (DeviceShare.ROLE_OWNER.equals(role)) {
+            device.assignOwner(member);
+        }
+        deviceAuditService.record(device, inviter, "SHARE_ASSIGNED", member.getEmail(), "Share assigned with role " + share.getRole());
         return toShareResponse(device, share);
     }
 
@@ -210,7 +235,10 @@ public class DeviceService {
         Device device = findDevice(deviceId);
         ownershipService.requireDeviceManager(device);
         deviceShareRepository.findByDevice_DeviceIdAndMember_Id(deviceId, memberId)
-                .ifPresent(deviceShareRepository::delete);
+                .ifPresent(share -> {
+                    deviceAuditService.recordCurrentActor(device, "SHARE_REMOVED", share.getMember().getEmail(), "Share removed");
+                    deviceShareRepository.delete(share);
+                });
         memberRepository.findById(memberId).ifPresent(device::unassignOwnerIf);
     }
 
@@ -221,6 +249,7 @@ public class DeviceService {
         DeviceShareInvite invite = deviceShareInviteRepository.findByIdAndDevice_DeviceId(inviteId, deviceId)
                 .orElseThrow(() -> new NotFoundException("share invite not found: " + inviteId));
         invite.revoke();
+        deviceAuditService.recordCurrentActor(device, "SHARE_INVITE_REVOKED", invite.getEmail(), "Share invitation revoked");
     }
 
     @Transactional
@@ -247,6 +276,7 @@ public class DeviceService {
         shareDeviceWithMember(device, member, DeviceShare.Source.QR);
         claimToken.markUsed(member);
         updateOptionalMetadata(device, request);
+        deviceAuditService.record(device, member, "CLAIM_QR_USED", member.getEmail(), "Device registered by QR");
         return toDetailResponse(device);
     }
 
@@ -271,13 +301,14 @@ public class DeviceService {
 
         shareDeviceWithMember(device, member, DeviceShare.Source.QR);
         updateOptionalMetadata(device, request);
+        deviceAuditService.record(device, member, "DEVICE_CLAIMED", member.getEmail(), "Device registered by key");
         return toDetailResponse(device);
     }
 
     private void shareDeviceWithMember(Device device, Member member, DeviceShare.Source source) {
         device.assignOwner(member);
         if (!deviceShareRepository.existsByDeviceAndMember_Id(device, member.getId())) {
-            deviceShareRepository.save(new DeviceShare(device, member, "USER", source));
+            deviceShareRepository.save(new DeviceShare(device, member, DeviceShare.ROLE_CONTROLLER, source));
         }
     }
 
@@ -294,19 +325,33 @@ public class DeviceService {
     public DeviceDetailResponse updateMetadata(String deviceId, DeviceMetadataUpdateRequest request) {
         Device device = deviceRepository.findByDeviceId(deviceId)
                 .orElseThrow(() -> new NotFoundException("device not found: " + deviceId));
-        ownershipService.requireDeviceAccess(device);
+        ownershipService.requireDeviceControl(device);
 
         device.updateMetadata(request.displayName(), request.room());
+        deviceAuditService.recordCurrentActor(device, "METADATA_UPDATED", null, "Device metadata updated");
 
         return toDetailResponse(device);
     }
 
+    @Transactional
+    public DeviceDetailResponse updatePreference(String deviceId, DevicePreferenceUpdateRequest request) {
+        Device device = findDevice(deviceId);
+        ownershipService.requireDeviceAccess(device);
+        Member member = ownershipService.currentMember();
+        DeviceMemberPreference preference = preferenceRepository.findByDeviceAndMember(device, member)
+                .orElseGet(() -> preferenceRepository.save(new DeviceMemberPreference(device, member)));
+        preference.update(request.displayName(), request.room());
+        deviceAuditService.record(device, member, "PREFERENCE_UPDATED", member.getEmail(), "Personal device preference updated");
+        return toDetailResponse(device);
+    }
+
     private DeviceDetailResponse toDetailResponse(Device device) {
+        DeviceMemberPreference preference = currentPreference(device);
         return new DeviceDetailResponse(
                 device.getDeviceId(),
-                device.getEffectiveName(),
+                effectiveName(device, preference),
                 device.getDisplayName(),
-                device.getRoom(),
+                effectiveRoom(device, preference),
                 device.getDeviceType(),
                 device.getFwVersion(),
                 device.getIp(),
@@ -314,8 +359,29 @@ public class DeviceService {
                 isOnline(device),
                 device.getLastSeenAt(),
                 device.getCreatedAt(),
+                device.getHome() == null ? null : device.getHome().getId(),
+                device.getHome() == null ? null : device.getHome().getName(),
+                preference == null ? null : preference.getDisplayName(),
+                preference == null ? null : preference.getRoom(),
+                ownershipService.canControlDevice(device),
                 ownershipService.canManageDevice(device)
         );
+    }
+
+    private DeviceMemberPreference currentPreference(Device device) {
+        if (ownershipService.isMaster()) {
+            return null;
+        }
+        Member member = ownershipService.currentMember();
+        return preferenceRepository.findByDeviceAndMember(device, member).orElse(null);
+    }
+
+    private String effectiveName(Device device, DeviceMemberPreference preference) {
+        return preference != null && preference.getDisplayName() != null ? preference.getDisplayName() : device.getEffectiveName();
+    }
+
+    private String effectiveRoom(Device device, DeviceMemberPreference preference) {
+        return preference != null && preference.getRoom() != null ? preference.getRoom() : device.getRoom();
     }
 
     private boolean isOnline(Device device) {
@@ -333,7 +399,7 @@ public class DeviceService {
                 member.getId(),
                 member.getEmail(),
                 member.getName(),
-                owner ? "OWNER" : share.getRole(),
+                owner ? DeviceShare.ROLE_OWNER : share.getRole(),
                 share.getSource().name(),
                 "ACTIVE",
                 owner,

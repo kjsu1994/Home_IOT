@@ -6,11 +6,14 @@ import com.homeiot.device.dto.DeviceDetailResponse;
 import com.homeiot.device.dto.DeviceResponse;
 import com.homeiot.device.dto.DeviceStateResponse;
 import com.homeiot.device.entity.Device;
+import com.homeiot.device.entity.DeviceMemberPreference;
 import com.homeiot.device.entity.DeviceShare;
 import com.homeiot.device.entity.DeviceState;
+import com.homeiot.device.repository.DeviceMemberPreferenceRepository;
 import com.homeiot.device.repository.DeviceRepository;
 import com.homeiot.device.repository.DeviceShareRepository;
 import com.homeiot.device.repository.DeviceStateRepository;
+import com.homeiot.member.entity.Member;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,15 +28,18 @@ public class DeviceQueryService {
     private static final Duration OFFLINE_AFTER = Duration.ofSeconds(90);
 
     private final DeviceRepository deviceRepository;
+    private final DeviceMemberPreferenceRepository preferenceRepository;
     private final DeviceShareRepository deviceShareRepository;
     private final DeviceStateRepository deviceStateRepository;
     private final OwnershipService ownershipService;
 
     public DeviceQueryService(DeviceRepository deviceRepository,
+                              DeviceMemberPreferenceRepository preferenceRepository,
                               DeviceShareRepository deviceShareRepository,
                               DeviceStateRepository deviceStateRepository,
                               OwnershipService ownershipService) {
         this.deviceRepository = deviceRepository;
+        this.preferenceRepository = preferenceRepository;
         this.deviceShareRepository = deviceShareRepository;
         this.deviceStateRepository = deviceStateRepository;
         this.ownershipService = ownershipService;
@@ -82,11 +88,12 @@ public class DeviceQueryService {
     }
 
     private DeviceResponse toDeviceResponse(Device device) {
+        DeviceMemberPreference preference = currentPreference(device);
         return new DeviceResponse(
                 device.getDeviceId(),
-                device.getEffectiveName(),
+                effectiveName(device, preference),
                 device.getDisplayName(),
-                device.getRoom(),
+                effectiveRoom(device, preference),
                 device.getDeviceType(),
                 device.getFwVersion(),
                 device.getIp(),
@@ -94,16 +101,22 @@ public class DeviceQueryService {
                 isOnline(device),
                 device.getLastSeenAt(),
                 device.getCreatedAt(),
+                device.getHome() == null ? null : device.getHome().getId(),
+                device.getHome() == null ? null : device.getHome().getName(),
+                preference == null ? null : preference.getDisplayName(),
+                preference == null ? null : preference.getRoom(),
+                ownershipService.canControlDevice(device),
                 ownershipService.canManageDevice(device)
         );
     }
 
     private DeviceDetailResponse toDeviceDetailResponse(Device device) {
+        DeviceMemberPreference preference = currentPreference(device);
         return new DeviceDetailResponse(
                 device.getDeviceId(),
-                device.getEffectiveName(),
+                effectiveName(device, preference),
                 device.getDisplayName(),
-                device.getRoom(),
+                effectiveRoom(device, preference),
                 device.getDeviceType(),
                 device.getFwVersion(),
                 device.getIp(),
@@ -111,8 +124,29 @@ public class DeviceQueryService {
                 isOnline(device),
                 device.getLastSeenAt(),
                 device.getCreatedAt(),
+                device.getHome() == null ? null : device.getHome().getId(),
+                device.getHome() == null ? null : device.getHome().getName(),
+                preference == null ? null : preference.getDisplayName(),
+                preference == null ? null : preference.getRoom(),
+                ownershipService.canControlDevice(device),
                 ownershipService.canManageDevice(device)
         );
+    }
+
+    private DeviceMemberPreference currentPreference(Device device) {
+        if (ownershipService.isMaster()) {
+            return null;
+        }
+        Member member = ownershipService.currentMember();
+        return preferenceRepository.findByDeviceAndMember(device, member).orElse(null);
+    }
+
+    private String effectiveName(Device device, DeviceMemberPreference preference) {
+        return preference != null && preference.getDisplayName() != null ? preference.getDisplayName() : device.getEffectiveName();
+    }
+
+    private String effectiveRoom(Device device, DeviceMemberPreference preference) {
+        return preference != null && preference.getRoom() != null ? preference.getRoom() : device.getRoom();
     }
 
     private boolean isOnline(Device device) {

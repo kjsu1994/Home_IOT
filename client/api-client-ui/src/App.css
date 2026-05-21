@@ -30,6 +30,14 @@ body {
   background: var(--slate-50);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
 }
 
 button,
@@ -37,6 +45,7 @@ input,
 select,
 textarea {
   font: inherit;
+  min-width: 0;
 }
 
 button {
@@ -61,7 +70,7 @@ select:focus-visible {
 
 .app-shell {
   min-height: 100vh;
-  padding: 28px;
+  padding: clamp(16px, 3vw, 28px);
   background:
     linear-gradient(180deg, rgba(239, 246, 255, 0.95) 0%, rgba(248, 250, 252, 0.98) 34%, #f8fafc 100%);
 }
@@ -87,6 +96,10 @@ select:focus-visible {
   margin: 0 auto 18px;
   padding: 28px 30px;
   border-radius: 32px;
+}
+
+.hero-panel > div {
+  min-width: 0;
 }
 
 .hero-panel::before {
@@ -186,6 +199,7 @@ select:focus-visible {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
+  flex: 0 0 auto;
 }
 
 .logout-button,
@@ -224,6 +238,7 @@ select:focus-visible {
 
 .command-button {
   padding: 12px 15px;
+  min-height: 44px;
 }
 
 .logout-button {
@@ -310,8 +325,33 @@ h2 {
   background: #fff1f2;
 }
 
+.view-tabs {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto 18px;
+  gap: 8px;
+}
+
+.view-tabs button {
+  border: 1px solid var(--slate-200);
+  border-radius: 16px;
+  padding: 11px 16px;
+  color: var(--slate-500);
+  background: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.view-tabs button.active {
+  color: #fff;
+  border-color: var(--slate-900);
+  background: var(--slate-900);
+}
+
 .metric-grid,
-.workspace-grid {
+.workspace-grid,
+.camera-workspace {
   display: grid;
   max-width: 1280px;
   margin: 0 auto;
@@ -327,6 +367,7 @@ h2 {
   min-height: 112px;
   padding: 22px;
   border-radius: 28px;
+  min-width: 0;
 }
 
 .metric-card span,
@@ -355,9 +396,16 @@ h2 {
   align-items: start;
 }
 
+.camera-workspace {
+  grid-template-columns: 320px minmax(0, 1fr);
+  align-items: start;
+}
+
 .device-rail,
 .detail-panel,
-.panel {
+.panel,
+.camera-list,
+.camera-stage {
   border-radius: 30px;
 }
 
@@ -370,6 +418,75 @@ h2 {
 .detail-panel {
   min-height: 560px;
   padding: 26px;
+  min-width: 0;
+}
+
+.camera-list,
+.camera-stage {
+  padding: 22px;
+  min-width: 0;
+}
+
+.camera-list {
+  position: sticky;
+  top: 18px;
+}
+
+.camera-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  overflow: hidden;
+  border-radius: 24px;
+  background: var(--slate-900);
+}
+
+.camera-frame img,
+.camera-frame canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 620px;
+  object-fit: contain;
+}
+
+.camera-frame canvas {
+  aspect-ratio: 4 / 3;
+}
+
+.camera-viewer-status {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--slate-100);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.camera-viewer-status span:not(:last-child)::after {
+  content: "/";
+  margin-left: 6px;
+  color: var(--slate-400);
+}
+
+.camera-frame .empty-state {
+  color: var(--slate-300);
+  background: transparent;
+}
+
+.camera-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
 }
 
 .section-title,
@@ -378,12 +495,20 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
 }
 
 .section-title {
   margin-bottom: 16px;
   color: var(--slate-800);
   font-weight: 1000;
+}
+
+.section-title span,
+.detail-header h2,
+.detail-header p {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .device-list,
@@ -579,6 +704,7 @@ h2 {
   color: #dbeafe;
   background: var(--slate-900);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .timeline-item {
@@ -866,6 +992,29 @@ h2 {
   background: #fff;
   box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
 }
+@media (max-width: 1180px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .device-rail {
+    position: static;
+  }
+
+  .device-list {
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  }
+
+  .claim-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+  }
+
+  .claim-title,
+  .claim-form .save-button {
+    grid-column: 1 / -1;
+  }
+}
 @media (max-width: 860px) {
   .account-summary,
   .account-grid {
@@ -993,7 +1142,7 @@ h2 {
 
 .share-assign-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) auto;
   gap: 10px;
 }
 
@@ -1099,5 +1248,226 @@ h2 {
 
   .share-meta {
     justify-items: start;
+  }
+}
+
+@media (max-width: 700px) {
+  .app-shell {
+    padding-bottom: 104px;
+  }
+
+  .hero-panel,
+  .detail-panel,
+  .device-rail,
+  .account-panel,
+  .panel,
+  .metric-card {
+    padding: 18px;
+  }
+
+  .hero-panel {
+    gap: 18px;
+  }
+
+  .hero-actions,
+  .detail-actions,
+  .command-bar {
+    width: 100%;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .device-list,
+  .claim-form,
+  .qr-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .command-bar {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 40;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.88);
+    box-shadow: 0 18px 46px rgba(15, 23, 42, 0.16);
+    backdrop-filter: blur(18px);
+  }
+
+  .command-button {
+    min-height: 48px;
+    padding: 11px 12px;
+  }
+}
+
+@media (max-width: 430px) {
+  .metric-grid,
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-panel::before {
+    display: none;
+  }
+
+  h1 {
+    font-size: 34px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .device-rail {
+    position: static;
+  }
+
+  .device-list {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .detail-panel {
+    min-height: auto;
+  }
+
+  .metadata-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metadata-form .save-button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+@media (max-width: 860px) {
+  .app-shell {
+    padding: 14px;
+  }
+
+  .hero-panel {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 16px;
+  }
+
+  .hero-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .detail-header,
+  .section-title {
+    align-items: flex-start;
+  }
+
+  .info-grid,
+  .split-grid,
+  .state-grid,
+  .camera-meta,
+  .camera-workspace,
+  .share-admin-grid,
+  .share-row,
+  .qr-history-row {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-actions,
+  .account-badges {
+    justify-content: flex-start;
+  }
+
+  .share-meta {
+    justify-items: start;
+  }
+}
+
+@media (max-width: 700px) {
+  .app-shell {
+    padding: 12px 12px 120px;
+  }
+
+  .hero-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-panel::before {
+    display: none;
+  }
+
+  .hero-panel,
+  .detail-panel,
+  .device-rail,
+  .camera-list,
+  .camera-stage,
+  .account-panel,
+  .panel,
+  .metric-card {
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .hero-actions,
+  .detail-actions,
+  .share-assign-form,
+  .metadata-form,
+  .claim-form,
+  .qr-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-actions,
+  .detail-actions {
+    display: grid;
+  }
+
+  .hero-actions > *,
+  .detail-actions > *,
+  .share-assign-form > *,
+  .metadata-form > *,
+  .claim-form > * {
+    width: 100%;
+  }
+
+  .command-bar {
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(10px, env(safe-area-inset-bottom));
+  }
+
+  .camera-frame {
+    min-height: 260px;
+  }
+}
+
+@media (max-width: 430px) {
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  h1 {
+    font-size: 32px;
+    line-height: 1.02;
+  }
+
+  .command-bar {
+    grid-template-columns: 1fr;
+    max-height: 42vh;
+    overflow-y: auto;
   }
 }

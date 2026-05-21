@@ -18,6 +18,11 @@ public record DeviceDetailResponse(
         boolean online,
         OffsetDateTime lastSeenAt,
         OffsetDateTime createdAt,
+        Long homeId,
+        String homeName,
+        String personalDisplayName,
+        String personalRoom,
+        boolean controlAllowed,
         boolean shareManager
 ) {
 }

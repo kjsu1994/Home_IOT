@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import './App.css'
 import { clearStoredAuth, fetchJson, hasStoredAuth, patchJson, postJson, resolveApiPath, storeTokens } from './utils/api.js'
@@ -44,6 +44,18 @@ const UI = {
   pendingInvite: '\ucd08\ub300 \ub300\uae30',
   inviteExpires: '\ucd08\ub300 \ub9cc\ub8cc',
   inviteHint: '\ubbf8\uac00\uc785 \uc774\uba54\uc77c\uc740 \ucd08\ub300 \uba54\uc77c\uc744 \ubcf4\ub0b4\uace0, \uac00\uc785/\ub85c\uadf8\uc778 \uc2dc \uc790\ub3d9\uc73c\ub85c \uacf5\uc720\ub429\ub2c8\ub2e4.',
+  viewer: '\ubcf4\uae30 \uc804\uc6a9',
+  controller: '\uc81c\uc5b4 \uac00\ub2a5',
+  manager: '\uad00\ub9ac\uc790',
+  auditLog: '\uac10\uc0ac \ub85c\uadf8',
+  noAuditLogs: '\uc544\uc9c1 \uae30\ub85d\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.',
+  personalAlias: '\ub0b4 \uc7a5\uce58 \ubcc4\uce6d',
+  personalAliasSaved: '\ub0b4 \uc7a5\uce58 \ubcc4\uce6d\uc744 \uc800\uc7a5\ud588\uc2b5\ub2c8\ub2e4.',
+  saveAlias: '\ubcc4\uce6d \uc800\uc7a5',
+  homeGroup: '\uc9d1/\uac00\uc871 \uadf8\ub8f9',
+  createHome: '\uc9d1 \ub9cc\ub4e4\uae30',
+  assignHome: '\uc120\ud0dd \uc7a5\uce58\ub97c \uc9d1\uc5d0 \ucd94\uac00',
+  addFamily: '\uac00\uc871 \ucd94\uac00',
 }
 
 const COMMANDS = [
@@ -82,8 +94,13 @@ export default function App() {
   const [claimQrLoading, setClaimQrLoading] = useState(false)
   const [shareUsers, setShareUsers] = useState([])
   const [claimHistory, setClaimHistory] = useState([])
+  const [auditLogs, setAuditLogs] = useState([])
+  const [homes, setHomes] = useState([])
   const [shareLoading, setShareLoading] = useState(false)
   const [assignEmail, setAssignEmail] = useState('')
+  const [assignRole, setAssignRole] = useState('CONTROLLER')
+  const [personalForm, setPersonalForm] = useState({ displayName: '', room: '' })
+  const [homeForm, setHomeForm] = useState({ name: '', memberEmail: '', homeId: '' })
   const [assigningShare, setAssigningShare] = useState(false)
   const [currentUser, setCurrentUser] = useState(null)
   const [accountOpen, setAccountOpen] = useState(false)
@@ -94,6 +111,13 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [roomFilter, setRoomFilter] = useState('ALL')
   const [showOffline, setShowOffline] = useState(true)
+  const [activeView, setActiveView] = useState('dashboard')
+  const [cameras, setCameras] = useState([])
+  const [selectedCameraId, setSelectedCameraId] = useState('')
+  const [cameraStreamPath, setCameraStreamPath] = useState('')
+  const [cameraRecordings, setCameraRecordings] = useState([])
+  const [cameraLoading, setCameraLoading] = useState(false)
+  const [cameraRecording, setCameraRecording] = useState(false)
 
   useEffect(() => {
     if (consumeOAuthCallback()) {
@@ -105,8 +129,19 @@ export default function App() {
   useEffect(() => {
     if (authenticated) {
       loadDevices()
+      loadCameras()
     }
   }, [authenticated])
+
+  useEffect(() => {
+    if (!authenticated || activeView !== 'video') {
+      return undefined
+    }
+
+    loadCameras()
+    const timer = window.setInterval(loadCameras, 10000)
+    return () => window.clearInterval(timer)
+  }, [authenticated, activeView])
 
   useEffect(() => {
     if (authenticated && pendingClaim?.deviceId && pendingClaim?.claimToken) {
@@ -124,7 +159,17 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [selectedId])
 
+  useEffect(() => {
+    if (!selectedCameraId || activeView !== 'video') {
+      setCameraStreamPath('')
+      return
+    }
+    issueCameraStreamToken(selectedCameraId)
+    loadCameraRecordings(selectedCameraId)
+  }, [selectedCameraId, activeView])
+
   const selectedDevice = devices.find((device) => device.deviceId === selectedId) ?? devices[0] ?? null
+  const selectedCamera = cameras.find((camera) => camera.deviceId === selectedCameraId) ?? cameras[0] ?? null
   const onlineCount = devices.filter((device) => device.online).length
   const avgRssi = getAverageRssi(devices)
   const rawState = parseJson(deviceState?.rawStateJson)
@@ -150,8 +195,10 @@ export default function App() {
   useEffect(() => {
     if (!selectedDevice) {
       setMetadataForm({ displayName: '', room: '' })
+      setPersonalForm({ displayName: '', room: '' })
       setShareUsers([])
       setClaimHistory([])
+      setAuditLogs([])
       return
     }
 
@@ -159,12 +206,17 @@ export default function App() {
       displayName: selectedDevice.displayName || selectedDevice.name || '',
       room: selectedDevice.room || '',
     })
+    setPersonalForm({
+      displayName: selectedDevice.personalDisplayName || '',
+      room: selectedDevice.personalRoom || '',
+    })
 
     if (canManageSharing) {
       loadShareManagement(selectedDevice.deviceId)
     } else {
       setShareUsers([])
       setClaimHistory([])
+      setAuditLogs([])
     }
   }, [selectedDevice?.deviceId, canManageSharing])
 
@@ -176,6 +228,7 @@ export default function App() {
       const nextDevices = (response.data ?? []).map(normalizeDevice)
       setDevices(nextDevices)
       setSelectedId((current) => current || nextDevices[0]?.deviceId || '')
+      loadHomes()
     } catch (err) {
       if (handleAuthError(err)) {
         return
@@ -183,6 +236,93 @@ export default function App() {
       setError(err.message || '장치 목록을 불러오지 못했습니다.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadHomes() {
+    try {
+      const response = await fetchJson('/api/homes')
+      setHomes((response.data ?? []).map(normalizeHome))
+    } catch {
+      setHomes([])
+    }
+  }
+
+  async function loadCameras() {
+    try {
+      setCameraLoading(true)
+      const response = await fetchJson('/api/cameras')
+      const nextCameras = (response.data ?? []).map(normalizeCamera)
+      setCameras(nextCameras)
+      setSelectedCameraId((current) => current || nextCameras[0]?.deviceId || '')
+    } catch (err) {
+      if (handleAuthError(err)) {
+        return
+      }
+      setMessage(err.message || 'Failed to load cameras.')
+    } finally {
+      setCameraLoading(false)
+    }
+  }
+
+  async function issueCameraStreamToken(deviceId) {
+    try {
+      const response = await postJson(`/api/cameras/${deviceId}/stream-token`, {})
+      setCameraStreamPath(resolveApiPath(response.data?.stream_path || response.data?.streamPath || ''))
+    } catch (err) {
+      if (handleAuthError(err)) {
+        return
+      }
+      setCameraStreamPath('')
+      setMessage(err.message || 'Failed to open camera stream.')
+    }
+  }
+
+  async function loadCameraRecordings(deviceId) {
+    try {
+      const response = await fetchJson(`/api/cameras/${deviceId}/recordings`)
+      const recordings = (response.data ?? []).map(normalizeCameraRecording)
+      setCameraRecordings(recordings)
+      setCameraRecording(recordings.some((recording) => recording.active))
+    } catch (err) {
+      if (handleAuthError(err)) {
+        return
+      }
+      setCameraRecordings([])
+    }
+  }
+
+  async function startCameraRecording() {
+    if (!selectedCamera) {
+      return
+    }
+    try {
+      setMessage('')
+      await postJson(`/api/cameras/${selectedCamera.deviceId}/recordings/start`, {})
+      await loadCameraRecordings(selectedCamera.deviceId)
+      setMessage('Camera recording started.')
+    } catch (err) {
+      if (handleAuthError(err)) {
+        return
+      }
+      setMessage(err.message || 'Failed to start camera recording.')
+    }
+  }
+
+  async function stopCameraRecording() {
+    if (!selectedCamera) {
+      return
+    }
+    try {
+      setMessage('')
+      await postJson(`/api/cameras/${selectedCamera.deviceId}/recordings/stop`, {})
+      await loadCameraRecordings(selectedCamera.deviceId)
+      setMessage('Camera recording stopped.')
+    } catch (err) {
+      if (handleAuthError(err)) {
+        return
+      }
+      setMessage(err.message || 'Failed to stop camera recording.')
     }
   }
 
@@ -216,12 +356,14 @@ export default function App() {
   async function loadShareManagement(deviceId) {
     try {
       setShareLoading(true)
-      const [sharesResponse, historyResponse] = await Promise.all([
+      const [sharesResponse, historyResponse, auditsResponse] = await Promise.all([
         fetchJson(`/api/devices/${deviceId}/shares`),
         fetchJson(`/api/devices/${deviceId}/claim-tokens`),
+        fetchJson(`/api/devices/${deviceId}/audits`),
       ])
       setShareUsers((sharesResponse.data ?? []).map(normalizeShare))
       setClaimHistory((historyResponse.data ?? []).map(normalizeClaimHistory))
+      setAuditLogs((auditsResponse.data ?? []).map(normalizeAuditLog))
     } catch (err) {
       if (handleAuthError(err)) {
         return
@@ -240,7 +382,7 @@ export default function App() {
     try {
       setAssigningShare(true)
       setMessage('')
-      await postJson(`/api/devices/${selectedDevice.deviceId}/shares`, { email: assignEmail.trim() })
+      await postJson(`/api/devices/${selectedDevice.deviceId}/shares`, { email: assignEmail.trim(), role: assignRole })
       setAssignEmail('')
       await loadShareManagement(selectedDevice.deviceId)
       setMessage(UI.assignSaved)
@@ -342,6 +484,81 @@ export default function App() {
       setMessage(err.message || '장치 정보를 저장하지 못했습니다.')
     } finally {
       setSavingMetadata(false)
+    }
+  }
+
+  async function savePersonalPreference(event) {
+    event.preventDefault()
+    if (!selectedDevice) {
+      return
+    }
+    try {
+      setMessage('')
+      const response = await patchJson(`/api/devices/${selectedDevice.deviceId}/preference`, {
+        display_name: personalForm.displayName,
+        room: personalForm.room,
+      })
+      const updated = normalizeDevice(response.data)
+      setDevices((current) => current.map((device) => (
+        device.deviceId === updated.deviceId ? { ...device, ...updated } : device
+      )))
+      setMessage(UI.personalAliasSaved)
+    } catch (err) {
+      if (handleAuthError(err)) {
+        return
+      }
+      setMessage(err.message || UI.assignFailed)
+    }
+  }
+
+  async function createHome(event) {
+    event.preventDefault()
+    try {
+      setMessage('')
+      await postJson('/api/homes', { name: homeForm.name.trim() })
+      setHomeForm((current) => ({ ...current, name: '' }))
+      await loadHomes()
+    } catch (err) {
+      if (handleAuthError(err)) {
+        return
+      }
+      setMessage(err.message || UI.assignFailed)
+    }
+  }
+
+  async function assignDeviceHome() {
+    if (!selectedDevice || !homeForm.homeId) {
+      return
+    }
+    try {
+      setMessage('')
+      await postJson(`/api/homes/${homeForm.homeId}/devices/${selectedDevice.deviceId}`, {})
+      await Promise.all([loadHomes(), loadDevices()])
+      setMessage(UI.assignSaved)
+    } catch (err) {
+      if (handleAuthError(err)) {
+        return
+      }
+      setMessage(err.message || UI.assignFailed)
+    }
+  }
+
+  async function addHomeMember(event) {
+    event.preventDefault()
+    if (!homeForm.homeId) {
+      return
+    }
+    try {
+      setMessage('')
+      await postJson(`/api/homes/${homeForm.homeId}/members`, { email: homeForm.memberEmail.trim(), role: assignRole })
+      setHomeForm((current) => ({ ...current, memberEmail: '' }))
+      await Promise.all([loadHomes(), selectedDevice ? loadShareManagement(selectedDevice.deviceId) : Promise.resolve()])
+      setMessage(UI.assignSaved)
+    } catch (err) {
+      if (handleAuthError(err)) {
+        return
+      }
+      setMessage(err.message || UI.assignFailed)
     }
   }
 
@@ -635,6 +852,11 @@ export default function App() {
     setDeviceState(null)
     setCommands([])
     setTelemetry([])
+    setCameras([])
+    setSelectedCameraId('')
+    setCameraStreamPath('')
+    setCameraRecordings([])
+    setCameraRecording(false)
   }
 
   function handleAuthError(err) {
@@ -743,6 +965,23 @@ export default function App() {
       {error ? <div className="banner error">{error}</div> : null}
       {message ? <div className="banner">{message}</div> : null}
 
+      <nav className="view-tabs" aria-label="Home IoT views">
+        <button
+          type="button"
+          className={activeView === 'dashboard' ? 'active' : ''}
+          onClick={() => setActiveView('dashboard')}
+        >
+          Dashboard
+        </button>
+        <button
+          type="button"
+          className={activeView === 'video' ? 'active' : ''}
+          onClick={() => setActiveView('video')}
+        >
+          Live Video
+        </button>
+      </nav>
+
       {accountOpen ? (
         <section className="account-panel">
           <div className="account-summary">
@@ -794,6 +1033,22 @@ export default function App() {
         </section>
       ) : null}
 
+      {activeView === 'video' ? (
+        <CameraPanel
+          cameras={cameras}
+          selectedCamera={selectedCamera}
+          selectedCameraId={selectedCameraId}
+          streamPath={cameraStreamPath}
+          recordings={cameraRecordings}
+          loading={cameraLoading}
+          recording={cameraRecording}
+          onSelectCamera={setSelectedCameraId}
+          onRefresh={loadCameras}
+          onStartRecording={startCameraRecording}
+          onStopRecording={stopCameraRecording}
+        />
+      ) : (
+        <>
       <section className="metric-grid">
         <Metric label="등록 장치" value={devices.length} />
         <Metric label="온라인" value={`${onlineCount}/${devices.length || 0}`} tone="green" />
@@ -945,6 +1200,34 @@ export default function App() {
                 </button>
               </form>
 
+              <form className="metadata-form" onSubmit={savePersonalPreference}>
+                <label>
+                  <span>{UI.personalAlias}</span>
+                  <input
+                    value={personalForm.displayName}
+                    onChange={(event) => setPersonalForm((current) => ({
+                      ...current,
+                      displayName: event.target.value,
+                    }))}
+                    placeholder={selectedDevice.displayName || selectedDevice.name || selectedDevice.deviceId}
+                  />
+                </label>
+                <label>
+                  <span>{UI.method}</span>
+                  <input
+                    value={personalForm.room}
+                    onChange={(event) => setPersonalForm((current) => ({
+                      ...current,
+                      room: event.target.value,
+                    }))}
+                    placeholder={selectedDevice.room || '-'}
+                  />
+                </label>
+                <button className="save-button">
+                  {UI.saveAlias}
+                </button>
+              </form>
+
 
 
               {canManageSharing ? (
@@ -964,6 +1247,11 @@ export default function App() {
                           placeholder={UI.assignPlaceholder}
                           required
                         />
+                        <select className="filter-input" value={assignRole} onChange={(event) => setAssignRole(event.target.value)}>
+                          <option value="CONTROLLER">{UI.controller}</option>
+                          <option value="VIEWER">{UI.viewer}</option>
+                          <option value="OWNER">{UI.manager}</option>
+                        </select>
                         <button className="save-button" disabled={assigningShare}>
                           {assigningShare ? UI.assigning : UI.assign}
                         </button>
@@ -978,13 +1266,13 @@ export default function App() {
                       {!shareUsers.length ? <Empty text={UI.noShares} /> : (
                         <div className="share-list">
                           {shareUsers.map((share) => (
-                            <div className="share-row" key={share.memberId}>
+                            <div className="share-row" key={share.memberId || `invite-${share.inviteId}`}>
                               <div>
                                 <strong>{share.name || share.email}</strong>
                                 <span>{share.email}</span>
                               </div>
                               <div className="share-meta">
-                                <span>{share.status === 'PENDING' ? UI.pendingInvite : share.owner ? UI.owner : share.role}</span>
+                                <span>{share.status === 'PENDING' ? UI.pendingInvite : share.owner ? UI.owner : formatShareRole(share.role)}</span>
                                 <span>{formatShareSource(share.source)}</span>
                                 <span>{share.status === 'PENDING' ? `${UI.inviteExpires}: ${formatDate(share.expiresAt)}` : formatDate(share.sharedAt)}</span>
                               </div>
@@ -998,6 +1286,39 @@ export default function App() {
                         </div>
                       )}
                     </section>
+                  </div>
+
+                  <div className="share-admin-card qr-history-card">
+                    <div className="section-title">
+                      <span>{UI.homeGroup}</span>
+                      <small>{selectedDevice.homeName || '-'}</small>
+                    </div>
+                    <form className="share-assign-form" onSubmit={createHome}>
+                      <input
+                        className="filter-input"
+                        value={homeForm.name}
+                        onChange={(event) => setHomeForm((current) => ({ ...current, name: event.target.value }))}
+                        placeholder={UI.createHome}
+                      />
+                      <button className="save-button">{UI.createHome}</button>
+                    </form>
+                    <form className="share-assign-form" onSubmit={addHomeMember}>
+                      <select className="filter-input" value={homeForm.homeId} onChange={(event) => setHomeForm((current) => ({ ...current, homeId: event.target.value }))}>
+                        <option value="">{UI.homeGroup}</option>
+                        {homes.map((home) => (
+                          <option key={home.homeId} value={home.homeId}>{home.name}</option>
+                        ))}
+                      </select>
+                      <input
+                        className="filter-input"
+                        type="email"
+                        value={homeForm.memberEmail}
+                        onChange={(event) => setHomeForm((current) => ({ ...current, memberEmail: event.target.value }))}
+                        placeholder={UI.assignPlaceholder}
+                      />
+                      <button className="save-button">{UI.addFamily}</button>
+                      <button className="logout-button compact" type="button" onClick={assignDeviceHome}>{UI.assignHome}</button>
+                    </form>
                   </div>
 
                   <div className="share-admin-card qr-history-card">
@@ -1024,6 +1345,25 @@ export default function App() {
                       </div>
                     )}
                   </div>
+
+                  <div className="share-admin-card qr-history-card">
+                    <div className="section-title">
+                      <span>{UI.auditLog}</span>
+                      <small>{auditLogs.length}</small>
+                    </div>
+                    {!auditLogs.length ? <Empty text={UI.noAuditLogs} /> : (
+                      <div className="qr-history-list">
+                        {auditLogs.map((log) => (
+                          <div className="qr-history-row" key={log.auditId}>
+                            <span>{formatAuditAction(log.action)}</span>
+                            <span>{formatDate(log.createdAt)}</span>
+                            <span>{log.actorEmail || '-'}</span>
+                            <span>{log.targetValue || '-'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </Panel>
               ) : null}
 
@@ -1032,7 +1372,7 @@ export default function App() {
                   <button
                     key={command.type}
                     className="command-button"
-                    disabled={busyCommand === command.type}
+                    disabled={busyCommand === command.type || !selectedDevice.controlAllowed}
                     onClick={() => sendCommand(command.type)}
                   >
                     {busyCommand === command.type ? '전송 중...' : command.label}
@@ -1077,6 +1417,8 @@ export default function App() {
           )}
         </section>
       </section>
+        </>
+      )}
 
       {claimQr ? (
         <div className="modal-backdrop" role="presentation" onClick={() => setClaimQr(null)}>
@@ -1156,6 +1498,287 @@ function Empty({ text }) {
   return <div className="empty-state">{text}</div>
 }
 
+function CameraPanel({
+  cameras,
+  selectedCamera,
+  selectedCameraId,
+  streamPath,
+  recordings,
+  loading,
+  recording,
+  onSelectCamera,
+  onRefresh,
+  onStartRecording,
+  onStopRecording,
+}) {
+  return (
+    <section className="camera-workspace">
+      <aside className="camera-list panel">
+        <div className="section-title">
+          <span>Live Video</span>
+          <small>{loading ? 'Loading' : `${cameras.length} cameras`}</small>
+        </div>
+        {!cameras.length ? <Empty text="No camera devices are registered." /> : (
+          <div className="device-list">
+            {cameras.map((camera) => (
+              <button
+                key={camera.deviceId}
+                className={`device-card ${camera.deviceId === selectedCameraId ? 'active' : ''}`}
+                type="button"
+                onClick={() => onSelectCamera(camera.deviceId)}
+              >
+                <span className={`status-dot ${camera.online ? 'online' : ''}`} />
+                <span>
+                  <strong>{camera.name || camera.deviceId}</strong>
+                  <small>{camera.room || '-'} / {camera.ip || '-'}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </aside>
+
+      <section className="camera-stage panel">
+        <div className="section-title">
+          <span>{selectedCamera?.name || 'Camera stream'}</span>
+          <button className="refresh-button" type="button" onClick={onRefresh}>Refresh</button>
+        </div>
+        <CameraLiveView selectedCamera={selectedCamera} streamPath={streamPath} />
+        <div className="camera-meta">
+          <Info label="Online" value={selectedCamera?.online ? 'YES' : 'NO'} />
+          <Info label="Camera" value={selectedCamera?.cameraReady ? 'READY' : 'WAITING'} />
+          <Info label="Frame" value={selectedCamera?.width && selectedCamera?.height ? `${selectedCamera.width}x${selectedCamera.height}` : '-'} />
+          <Info label="Ingest FPS" value={formatFps(selectedCamera?.ingestFps)} />
+          <Info label="Frame size" value={formatBytes(selectedCamera?.frameBytes)} />
+          <Info label="Frame age" value={formatDurationMs(selectedCamera?.lastFrameAgeMs)} />
+        </div>
+        <div className="command-bar">
+          <button className="command-button" type="button" disabled={!selectedCamera || recording} onClick={onStartRecording}>
+            Start recording
+          </button>
+          <button className="logout-button" type="button" disabled={!selectedCamera || !recording} onClick={onStopRecording}>
+            Stop recording
+          </button>
+        </div>
+        <Panel title="Recordings">
+          {!recordings.length ? <Empty text="No recordings yet." /> : (
+            <div className="timeline">
+              {recordings.slice(0, 10).map((recording) => (
+                <div className="timeline-item" key={recording.recordingId}>
+                  <strong>{recording.active ? 'Recording' : 'Recorded'} / {recording.frameCount} frames</strong>
+                  <span>{formatDate(recording.startedAt)} - {recording.active ? 'active' : formatDate(recording.stoppedAt)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </section>
+    </section>
+  )
+}
+
+function CameraLiveView({ selectedCamera, streamPath }) {
+  const canvasRef = useRef(null)
+  const [viewerStatus, setViewerStatus] = useState('Waiting')
+  const [useMjpegFallback, setUseMjpegFallback] = useState(false)
+  const [viewerStats, setViewerStats] = useState({
+    fps: 0,
+    frameBytes: 0,
+    renderedFrames: 0,
+    lastReceivedAt: '',
+  })
+
+  useEffect(() => {
+    setViewerStatus(selectedCamera && streamPath ? 'Connecting' : 'Waiting')
+    setUseMjpegFallback(false)
+    setViewerStats({ fps: 0, frameBytes: 0, renderedFrames: 0, lastReceivedAt: '' })
+    if (!selectedCamera || !streamPath) {
+      return undefined
+    }
+
+    let stopped = false
+    let renderedFrames = 0
+    let pendingObjectUrl = ''
+    let drawing = false
+    const receivedAtWindow = []
+    const webSocket = new WebSocket(resolveCameraWebSocketUrl(streamPath))
+    webSocket.binaryType = 'blob'
+
+    const drawLatestFrame = () => {
+      if (stopped) {
+        return
+      }
+      const objectUrl = pendingObjectUrl
+      pendingObjectUrl = ''
+      if (!objectUrl) {
+        drawing = false
+        return
+      }
+
+      drawing = true
+      const image = new Image()
+      image.onload = () => {
+        const canvas = canvasRef.current
+        const context = canvas?.getContext('2d')
+        if (canvas && context) {
+          if (canvas.width !== image.naturalWidth) {
+            canvas.width = image.naturalWidth
+          }
+          if (canvas.height !== image.naturalHeight) {
+            canvas.height = image.naturalHeight
+          }
+          context.drawImage(image, 0, 0, canvas.width, canvas.height)
+          renderedFrames += 1
+          if (renderedFrames === 1) {
+            setViewerStatus('Live')
+          }
+          setViewerStats((current) => ({
+            ...current,
+            renderedFrames,
+          }))
+        }
+        URL.revokeObjectURL(objectUrl)
+        window.requestAnimationFrame(drawLatestFrame)
+      }
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl)
+        window.requestAnimationFrame(drawLatestFrame)
+      }
+      image.src = objectUrl
+    }
+
+    webSocket.onopen = () => {
+      if (!stopped) {
+        setViewerStatus('Connected')
+      }
+    }
+    webSocket.onmessage = (event) => {
+      if (stopped || !(event.data instanceof Blob)) {
+        return
+      }
+      if (pendingObjectUrl) {
+        URL.revokeObjectURL(pendingObjectUrl)
+      }
+      const now = Date.now()
+      receivedAtWindow.push(now)
+      while (receivedAtWindow.length && receivedAtWindow[0] < now - 5000) {
+        receivedAtWindow.shift()
+      }
+      const elapsed = receivedAtWindow.length > 1 ? Math.max(1, receivedAtWindow[receivedAtWindow.length - 1] - receivedAtWindow[0]) : 0
+      const fps = elapsed ? ((receivedAtWindow.length - 1) * 1000) / elapsed : 0
+      setViewerStats((current) => ({
+        ...current,
+        fps,
+        frameBytes: event.data.size,
+        lastReceivedAt: new Date(now).toISOString(),
+      }))
+      pendingObjectUrl = URL.createObjectURL(event.data)
+      if (!drawing) {
+        drawLatestFrame()
+      }
+    }
+    webSocket.onerror = () => {
+      if (!stopped && renderedFrames === 0) {
+        setUseMjpegFallback(true)
+        setViewerStatus('MJPEG fallback')
+      }
+    }
+    webSocket.onclose = () => {
+      if (!stopped && renderedFrames === 0) {
+        setUseMjpegFallback(true)
+        setViewerStatus('MJPEG fallback')
+      }
+    }
+
+    return () => {
+      stopped = true
+      if (pendingObjectUrl) {
+        URL.revokeObjectURL(pendingObjectUrl)
+      }
+      webSocket.close()
+    }
+  }, [selectedCamera?.deviceId, streamPath])
+
+  if (!selectedCamera || !streamPath) {
+    return (
+      <div className="camera-frame">
+        <Empty text={selectedCamera ? 'Waiting for camera stream.' : 'Select a camera.'} />
+      </div>
+    )
+  }
+
+  return (
+    <div className="camera-frame">
+      {useMjpegFallback ? (
+        <img src={streamPath} alt={`${selectedCamera.name || selectedCamera.deviceId} live stream`} />
+      ) : (
+        <canvas ref={canvasRef} aria-label={`${selectedCamera.name || selectedCamera.deviceId} live stream`} />
+      )}
+      <div className="camera-viewer-status">
+        <span>{viewerStatus}</span>
+        <span>{formatFps(viewerStats.fps)} render</span>
+        <span>{formatBytes(viewerStats.frameBytes)}</span>
+        <span>{viewerStats.lastReceivedAt ? formatTime(viewerStats.lastReceivedAt) : '-'}</span>
+      </div>
+    </div>
+  )
+}
+
+function resolveCameraWebSocketUrl(streamPath) {
+  const path = streamPath.replace('/mjpeg', '/ws')
+  const url = new URL(path, window.location.href)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
+
+function formatTime(value) {
+  if (!value) {
+    return '-'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+  return new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(date)
+}
+
+function formatFps(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) {
+    return '0.0 fps'
+  }
+  return `${number.toFixed(1)} fps`
+}
+
+function formatBytes(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) {
+    return '-'
+  }
+  if (number < 1024) {
+    return `${number} B`
+  }
+  if (number < 1024 * 1024) {
+    return `${(number / 1024).toFixed(1)} KB`
+  }
+  return `${(number / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatDurationMs(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) {
+    return '-'
+  }
+  if (number < 1000) {
+    return `${Math.round(number)} ms`
+  }
+  return `${(number / 1000).toFixed(1)} s`
+}
+
 function consumeClaimCallback() {
   const params = new URLSearchParams(window.location.search)
   const deviceId = params.get('d') || params.get('deviceId')
@@ -1225,7 +1848,42 @@ function normalizeDevice(device) {
     online: Boolean(device?.online),
     lastSeenAt: device?.last_seen_at ?? device?.lastSeenAt ?? '',
     createdAt: device?.created_at ?? device?.createdAt ?? '',
+    homeId: device?.home_id ?? device?.homeId ?? null,
+    homeName: device?.home_name ?? device?.homeName ?? '',
+    personalDisplayName: device?.personal_display_name ?? device?.personalDisplayName ?? '',
+    personalRoom: device?.personal_room ?? device?.personalRoom ?? '',
+    controlAllowed: Boolean(device?.control_allowed ?? device?.controlAllowed ?? true),
     shareManager: Boolean(device?.share_manager ?? device?.shareManager ?? false),
+  }
+}
+
+function normalizeCamera(camera) {
+  return {
+    deviceId: camera?.device_id ?? camera?.deviceId ?? '',
+    name: camera?.name ?? '',
+    room: camera?.room ?? '',
+    deviceType: camera?.device_type ?? camera?.deviceType ?? '',
+    ip: camera?.ip ?? '',
+    online: Boolean(camera?.online),
+    cameraReady: Boolean(camera?.camera_ready ?? camera?.cameraReady),
+    lastFrameAt: camera?.last_frame_at ?? camera?.lastFrameAt ?? '',
+    width: camera?.width ?? null,
+    height: camera?.height ?? null,
+    frameBytes: camera?.frame_bytes ?? camera?.frameBytes ?? 0,
+    ingestFps: Number(camera?.ingest_fps ?? camera?.ingestFps ?? 0),
+    lastFrameAgeMs: Number(camera?.last_frame_age_ms ?? camera?.lastFrameAgeMs ?? 0),
+  }
+}
+
+function normalizeCameraRecording(recording) {
+  return {
+    recordingId: recording?.recording_id ?? recording?.recordingId ?? '',
+    deviceId: recording?.device_id ?? recording?.deviceId ?? '',
+    startedAt: recording?.started_at ?? recording?.startedAt ?? '',
+    stoppedAt: recording?.stopped_at ?? recording?.stoppedAt ?? '',
+    frameCount: recording?.frame_count ?? recording?.frameCount ?? 0,
+    totalBytes: recording?.total_bytes ?? recording?.totalBytes ?? 0,
+    active: Boolean(recording?.active),
   }
 }
 
@@ -1242,6 +1900,27 @@ function normalizeShare(share) {
     removable: share?.removable !== false,
     sharedAt: share?.shared_at ?? share?.sharedAt ?? '',
     expiresAt: share?.expires_at ?? share?.expiresAt ?? '',
+  }
+}
+
+function normalizeAuditLog(log) {
+  return {
+    auditId: log?.audit_id ?? log?.auditId ?? null,
+    action: log?.action ?? '',
+    targetValue: log?.target_value ?? log?.targetValue ?? '',
+    actorEmail: log?.actor_email ?? log?.actorEmail ?? '',
+    actorName: log?.actor_name ?? log?.actorName ?? '',
+    message: log?.message ?? '',
+    createdAt: log?.created_at ?? log?.createdAt ?? '',
+  }
+}
+
+function normalizeHome(home) {
+  return {
+    homeId: home?.home_id ?? home?.homeId ?? null,
+    name: home?.name ?? '',
+    ownerEmail: home?.owner_email ?? home?.ownerEmail ?? '',
+    members: home?.members ?? [],
   }
 }
 
@@ -1270,6 +1949,53 @@ function formatShareSource(source) {
       return UI.owner
     default:
       return source || '-'
+  }
+}
+
+function formatShareRole(role) {
+  switch (role) {
+    case 'VIEWER':
+      return UI.viewer
+    case 'OWNER':
+      return UI.manager
+    case 'CONTROLLER':
+    case 'USER':
+      return UI.controller
+    default:
+      return role || '-'
+  }
+}
+
+function formatAuditAction(action) {
+  switch (action) {
+    case 'COMMAND_CREATED':
+      return '\uba85\ub839 \uc2e4\ud589'
+    case 'SHARE_INVITED':
+      return '\uacf5\uc720 \ucd08\ub300'
+    case 'SHARE_ASSIGNED':
+      return '\uacf5\uc720 \ubc30\uc815'
+    case 'SHARE_REMOVED':
+      return '\uacf5\uc720 \ud574\uc81c'
+    case 'SHARE_INVITE_REVOKED':
+      return '\ucd08\ub300 \ucde8\uc18c'
+    case 'CLAIM_QR_ISSUED':
+      return 'QR \ubc1c\uae09'
+    case 'CLAIM_QR_REVOKED':
+      return 'QR \ucde8\uc18c'
+    case 'CLAIM_QR_USED':
+      return 'QR \ub4f1\ub85d'
+    case 'DEVICE_CLAIMED':
+      return '\uc7a5\uce58 \ub4f1\ub85d'
+    case 'METADATA_UPDATED':
+      return '\uc7a5\uce58 \uc815\ubcf4 \uc218\uc815'
+    case 'PREFERENCE_UPDATED':
+      return '\ub0b4 \ubcc4\uce6d \uc218\uc815'
+    case 'HOME_ASSIGNED':
+      return '\uc9d1 \uc5f0\uacb0'
+    case 'HOME_SHARE_SYNCED':
+      return '\uac00\uc871 \uacf5\uc720 \ub3d9\uae30\ud654'
+    default:
+      return action || '-'
   }
 }
 

@@ -22,6 +22,11 @@ import java.time.OffsetDateTime;
         @UniqueConstraint(name = "uk_device_shares_device_member", columnNames = {"device_id_fk", "member_id"})
 })
 public class DeviceShare {
+    public static final String ROLE_VIEWER = "VIEWER";
+    public static final String ROLE_CONTROLLER = "CONTROLLER";
+    public static final String ROLE_OWNER = "OWNER";
+    public static final String LEGACY_ROLE_USER = "USER";
+
     public enum Source {
         QR,
         ADMIN,
@@ -41,7 +46,7 @@ public class DeviceShare {
     private Member member;
 
     @Column(nullable = false, length = 30)
-    private String role = "USER";
+    private String role = ROLE_CONTROLLER;
 
     @Column(nullable = false, length = 20)
     @Enumerated(EnumType.STRING)
@@ -60,8 +65,35 @@ public class DeviceShare {
     public DeviceShare(Device device, Member member, String role, Source source) {
         this.device = device;
         this.member = member;
-        this.role = role == null || role.isBlank() ? "USER" : role;
+        this.role = normalizeRole(role);
         this.source = source == null ? Source.QR : source;
+    }
+
+    public static String normalizeRole(String role) {
+        if (role == null || role.isBlank()) {
+            return ROLE_CONTROLLER;
+        }
+        String normalized = role.trim().toUpperCase(java.util.Locale.ROOT);
+        if (LEGACY_ROLE_USER.equals(normalized)) {
+            return ROLE_CONTROLLER;
+        }
+        if (ROLE_VIEWER.equals(normalized) || ROLE_CONTROLLER.equals(normalized) || ROLE_OWNER.equals(normalized)) {
+            return normalized;
+        }
+        return ROLE_CONTROLLER;
+    }
+
+    public boolean canControl() {
+        String normalized = getRole();
+        return ROLE_CONTROLLER.equals(normalized) || ROLE_OWNER.equals(normalized);
+    }
+
+    public boolean canManage() {
+        return ROLE_OWNER.equals(getRole());
+    }
+
+    public void updateRole(String role) {
+        this.role = normalizeRole(role);
     }
 
     @PrePersist
@@ -82,7 +114,7 @@ public class DeviceShare {
     }
 
     public String getRole() {
-        return role;
+        return normalizeRole(role);
     }
 
     public Source getSource() {

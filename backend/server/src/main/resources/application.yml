@@ -94,4 +94,6 @@ app:
   device-api-key: ${APP_DEVICE_API_KEY:}
   master-emails: ${APP_MASTER_EMAILS:}
   oauth2-success-redirect-path: ${APP_OAUTH2_SUCCESS_REDIRECT_PATH:/iot/}
+  camera:
+    recording-root: ${APP_CAMERA_RECORDING_ROOT:camera-recordings}
 

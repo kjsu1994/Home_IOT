@@ -1,0 +1,9 @@
+{
+  "appId": "com.homeiot.app",
+  "appName": "Home IOT",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": false
+  }
+}

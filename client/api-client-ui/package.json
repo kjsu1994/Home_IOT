@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:android-web": "set VITE_BASE_PATH=/&& set VITE_API_BASE_PATH=https://ctfmon.shop/iot-api&& vite build",
+    "android:sync": "npm run build:android-web && cap sync android",
+    "android:apk": "npm run android:sync && cd android && gradlew.bat assembleDebug",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -13,7 +16,10 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "vite": "^5.4.2",
-    "@vitejs/plugin-react": "^4.3.1"
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.2"
   }
 }

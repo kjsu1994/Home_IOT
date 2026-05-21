@@ -23,7 +23,9 @@ public class DeviceApiKeyFilter extends OncePerRequestFilter {
             "/state/report",
             "/telemetry",
             "/ota/events",
-            "/ota/status"
+            "/ota/status",
+            "/camera/frame",
+            "/camera/status"
     );
     private static final Pattern PENDING_COMMAND_PATH = Pattern.compile("^/api/devices/[^/]+/commands/pending$");
     private static final Pattern COMMAND_STAGE_PATH = Pattern.compile("^/api/devices/[^/]+/commands/\\d+$");

@@ -54,8 +54,13 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/devices/*/telemetry").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/devices/*/ota/events").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/devices/*/ota/status").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/devices/*/camera/frame").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/devices/*/camera/status").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/devices/*/camera/ws").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/devices/*/commands/pending").permitAll()
                         .requestMatchers(HttpMethod.PATCH, "/api/devices/*/commands/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/cameras/*/mjpeg").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/cameras/*/ws").permitAll()
                         .requestMatchers("/api/**").hasAnyRole("USER", "MASTER")
                         .anyRequest().permitAll())
                 .oauth2Login(oauth -> oauth

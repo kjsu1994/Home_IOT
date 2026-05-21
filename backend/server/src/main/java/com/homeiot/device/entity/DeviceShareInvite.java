@@ -31,7 +31,7 @@ public class DeviceShareInvite {
     private String email;
 
     @Column(nullable = false, length = 30)
-    private String role = "USER";
+    private String role = DeviceShare.ROLE_CONTROLLER;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -59,7 +59,7 @@ public class DeviceShareInvite {
     public DeviceShareInvite(Device device, String email, String role, DeviceShare.Source source, Member invitedBy, OffsetDateTime expiresAt) {
         this.device = device;
         this.email = email;
-        this.role = role == null || role.isBlank() ? "USER" : role;
+        this.role = DeviceShare.normalizeRole(role);
         this.source = source == null ? DeviceShare.Source.FAMILY : source;
         this.invitedBy = invitedBy;
         this.expiresAt = expiresAt;
@@ -97,7 +97,7 @@ public class DeviceShareInvite {
     }
 
     public String getRole() {
-        return role;
+        return DeviceShare.normalizeRole(role);
     }
 
     public DeviceShare.Source getSource() {

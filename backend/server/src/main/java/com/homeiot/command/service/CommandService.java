@@ -10,6 +10,7 @@ import com.homeiot.command.repository.DeviceCommandRepository;
 import com.homeiot.common.error.NotFoundException;
 import com.homeiot.device.entity.Device;
 import com.homeiot.device.repository.DeviceRepository;
+import com.homeiot.device.service.DeviceAuditService;
 import com.homeiot.mqtt.publisher.DeviceMqttPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,15 +31,18 @@ public class CommandService {
     private final DeviceRepository deviceRepository;
     private final DeviceCommandRepository deviceCommandRepository;
     private final DeviceMqttPublisher deviceMqttPublisher;
+    private final DeviceAuditService deviceAuditService;
     private final OwnershipService ownershipService;
 
     public CommandService(DeviceRepository deviceRepository,
                           DeviceCommandRepository deviceCommandRepository,
                           DeviceMqttPublisher deviceMqttPublisher,
+                          DeviceAuditService deviceAuditService,
                           OwnershipService ownershipService) {
         this.deviceRepository = deviceRepository;
         this.deviceCommandRepository = deviceCommandRepository;
         this.deviceMqttPublisher = deviceMqttPublisher;
+        this.deviceAuditService = deviceAuditService;
         this.ownershipService = ownershipService;
     }
 
@@ -46,7 +50,7 @@ public class CommandService {
     public DeviceCommandResponse createCommand(String deviceId, DeviceCommandCreateRequest request) {
         Device device = deviceRepository.findByDeviceId(deviceId)
                 .orElseThrow(() -> new NotFoundException("device not found: " + deviceId));
-        ownershipService.requireDeviceAccess(device);
+        ownershipService.requireDeviceControl(device);
 
         DeviceCommand command = new DeviceCommand(device, request.commandType(), request.payloadJson());
         deviceCommandRepository.save(command);
@@ -63,6 +67,7 @@ public class CommandService {
         } else {
             command.markFailed("mqtt publish failed");
         }
+        deviceAuditService.recordCurrentActor(device, "COMMAND_CREATED", command.getCommandType(), command.getStatus().name());
 
         return toResponse(command);
     }

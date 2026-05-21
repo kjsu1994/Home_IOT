@@ -5,9 +5,11 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
 import java.util.Optional;
+import java.time.OffsetDateTime;
 
 public interface DeviceClaimTokenRepository extends JpaRepository<DeviceClaimToken, Long> {
     Optional<DeviceClaimToken> findByTokenHash(String tokenHash);
     Optional<DeviceClaimToken> findByIdAndDevice_DeviceId(Long id, String deviceId);
+    Optional<DeviceClaimToken> findFirstByDevice_DeviceIdAndUsedAtIsNullAndRevokedAtIsNullAndExpiresAtAfterAndTokenValueIsNotNullOrderByCreatedAtDesc(String deviceId, OffsetDateTime now);
     List<DeviceClaimToken> findTop20ByDevice_DeviceIdOrderByCreatedAtDesc(String deviceId);
 }

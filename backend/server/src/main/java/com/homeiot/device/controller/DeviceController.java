@@ -1,12 +1,14 @@
 package com.homeiot.device.controller;
 
 import com.homeiot.common.dto.ApiResponse;
+import com.homeiot.device.dto.DeviceAuditResponse;
 import com.homeiot.device.dto.DeviceClaimRequest;
 import com.homeiot.device.dto.DeviceClaimTokenHistoryResponse;
 import com.homeiot.device.dto.DeviceClaimTokenResponse;
 import com.homeiot.device.dto.DeviceDetailResponse;
 import com.homeiot.device.dto.DeviceHealthRequest;
 import com.homeiot.device.dto.DeviceMetadataUpdateRequest;
+import com.homeiot.device.dto.DevicePreferenceUpdateRequest;
 import com.homeiot.device.dto.DeviceRegisterRequest;
 import com.homeiot.device.dto.DeviceRegisterResponse;
 import com.homeiot.device.dto.DeviceResponse;
@@ -14,6 +16,7 @@ import com.homeiot.device.dto.DeviceShareAssignRequest;
 import com.homeiot.device.dto.DeviceShareResponse;
 import com.homeiot.device.dto.DeviceStateReportRequest;
 import com.homeiot.device.dto.DeviceStateResponse;
+import com.homeiot.device.service.DeviceAuditService;
 import com.homeiot.device.service.DeviceQueryService;
 import com.homeiot.device.service.DeviceService;
 import com.homeiot.device.service.DeviceStateService;
@@ -37,13 +40,16 @@ public class DeviceController {
     private final DeviceService deviceService;
     private final DeviceQueryService deviceQueryService;
     private final DeviceStateService deviceStateService;
+    private final DeviceAuditService deviceAuditService;
 
     public DeviceController(DeviceService deviceService,
                             DeviceQueryService deviceQueryService,
-                            DeviceStateService deviceStateService) {
+                            DeviceStateService deviceStateService,
+                            DeviceAuditService deviceAuditService) {
         this.deviceService = deviceService;
         this.deviceQueryService = deviceQueryService;
         this.deviceStateService = deviceStateService;
+        this.deviceAuditService = deviceAuditService;
     }
 
     @PostMapping("/register")
@@ -83,6 +89,11 @@ public class DeviceController {
         return ApiResponse.ok(deviceService.getShares(deviceId));
     }
 
+    @GetMapping("/{deviceId}/audits")
+    public ApiResponse<List<DeviceAuditResponse>> getAudits(@PathVariable String deviceId) {
+        return ApiResponse.ok(deviceAuditService.getAudits(deviceId));
+    }
+
     @PostMapping("/{deviceId}/shares")
     public ApiResponse<DeviceShareResponse> assignShare(@PathVariable String deviceId,
                                                         @Valid @RequestBody DeviceShareAssignRequest request) {
@@ -110,6 +121,12 @@ public class DeviceController {
     public ApiResponse<DeviceDetailResponse> updateMetadata(@PathVariable String deviceId,
                                                             @RequestBody DeviceMetadataUpdateRequest request) {
         return ApiResponse.ok(deviceService.updateMetadata(deviceId, request));
+    }
+
+    @PatchMapping("/{deviceId}/preference")
+    public ApiResponse<DeviceDetailResponse> updatePreference(@PathVariable String deviceId,
+                                                              @RequestBody DevicePreferenceUpdateRequest request) {
+        return ApiResponse.ok(deviceService.updatePreference(deviceId, request));
     }
 
     @GetMapping("/{deviceId}/state")

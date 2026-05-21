@@ -35,7 +35,7 @@ public class OwnershipService {
             return;
         }
         if (owned instanceof Device device && device.getId() != null
-                && deviceShareRepository.existsByDevice_IdAndMember_Id(device.getId(), member.getId())) {
+                && deviceShareRepository.findByDevice_IdAndMember_Id(device.getId(), member.getId()).isPresent()) {
             return;
         }
         throw new UnauthorizedException("device access denied");
@@ -46,12 +46,39 @@ public class OwnershipService {
             return true;
         }
         Member member = currentMember();
-        return device.ownerId() != null && device.ownerId().equals(member.getId());
+        if (device.ownerId() != null && device.ownerId().equals(member.getId())) {
+            return true;
+        }
+        if (device.getId() == null) {
+            return false;
+        }
+        return deviceShareRepository.findByDevice_IdAndMember_Id(device.getId(), member.getId())
+                .map(share -> share.canManage())
+                .orElse(false);
     }
 
     public void requireDeviceManager(Device device) {
         if (!canManageDevice(device)) {
             throw new UnauthorizedException("device manager required");
+        }
+    }
+
+    public boolean canControlDevice(Device device) {
+        if (canManageDevice(device)) {
+            return true;
+        }
+        Member member = currentMember();
+        if (device.getId() == null) {
+            return false;
+        }
+        return deviceShareRepository.findByDevice_IdAndMember_Id(device.getId(), member.getId())
+                .map(share -> share.canControl())
+                .orElse(false);
+    }
+
+    public void requireDeviceControl(Device device) {
+        if (!canControlDevice(device)) {
+            throw new UnauthorizedException("device control required");
         }
     }
 }

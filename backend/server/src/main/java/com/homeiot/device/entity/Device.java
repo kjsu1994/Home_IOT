@@ -48,6 +48,10 @@ public class Device implements DeviceOwnerMarker {
     @JoinColumn(name = "owner_member_id")
     private Member owner;
 
+    @ManyToOne(fetch = jakarta.persistence.FetchType.LAZY)
+    @JoinColumn(name = "home_id")
+    private HomeGroup home;
+
     @Column(name = "device_type", nullable = false, length = 80)
     private String deviceType;
 
@@ -128,6 +132,10 @@ public class Device implements DeviceOwnerMarker {
         }
     }
 
+    public void assignHome(HomeGroup home) {
+        this.home = home;
+    }
+
     public void updateDeviceApiKeyHash(String deviceApiKeyHash) {
         this.deviceApiKeyHash = deviceApiKeyHash;
         this.deviceApiKeyIssuedAt = OffsetDateTime.now();
@@ -187,6 +195,10 @@ public class Device implements DeviceOwnerMarker {
 
     public Member getOwner() {
         return owner;
+    }
+
+    public HomeGroup getHome() {
+        return home;
     }
 
     @Override
