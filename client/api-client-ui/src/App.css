@@ -432,6 +432,19 @@ h2 {
   top: 18px;
 }
 
+.camera-title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.camera-title-actions .active {
+  color: #fff;
+  border-color: var(--slate-900);
+  background: var(--slate-900);
+}
+
 .camera-frame {
   position: relative;
   display: grid;
@@ -453,6 +466,11 @@ h2 {
 
 .camera-frame canvas {
   aspect-ratio: 4 / 3;
+}
+
+.camera-frame.display-rotated img,
+.camera-frame.display-rotated canvas {
+  transform: rotate(180deg);
 }
 
 .camera-viewer-status {

@@ -22,6 +22,7 @@ public class CameraWebSocketHandler extends BinaryWebSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(CameraWebSocketHandler.class);
     private static final String DEVICE_API_KEY_HEADER = "X-Device-Api-Key";
     private static final Pattern DEVICE_PATH = Pattern.compile("^/api/devices/([^/]+)/camera/ws$");
+    private static final int CAMERA_MESSAGE_SIZE_LIMIT_BYTES = 256 * 1024;
 
     private final CameraService cameraService;
     private final DeviceRepository deviceRepository;
@@ -45,6 +46,7 @@ public class CameraWebSocketHandler extends BinaryWebSocketHandler {
             session.close(CloseStatus.NOT_ACCEPTABLE.withReason("invalid device api key"));
             return;
         }
+        session.setBinaryMessageSizeLimit(CAMERA_MESSAGE_SIZE_LIMIT_BYTES);
         session.getAttributes().put("deviceId", deviceId);
         log.info("camera device websocket connected deviceId={} remote={}", deviceId, session.getRemoteAddress());
     }

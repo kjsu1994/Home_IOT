@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
 @Component
 public class CameraViewerWebSocketHandler extends BinaryWebSocketHandler {
     private static final Pattern CAMERA_PATH = Pattern.compile("^/api/cameras/([^/]+)/ws$");
+    private static final int CAMERA_MESSAGE_SIZE_LIMIT_BYTES = 256 * 1024;
 
     private final CameraService cameraService;
     private final ExecutorService senderExecutor = Executors.newCachedThreadPool();
@@ -36,6 +37,7 @@ public class CameraViewerWebSocketHandler extends BinaryWebSocketHandler {
             session.close(CloseStatus.NOT_ACCEPTABLE.withReason("invalid stream token"));
             return;
         }
+        session.setBinaryMessageSizeLimit(CAMERA_MESSAGE_SIZE_LIMIT_BYTES);
 
         ViewerSession viewerSession = new ViewerSession(session);
         AutoCloseable subscription = cameraService.addFrameListener(deviceId, viewerSession::offer);

@@ -5,6 +5,9 @@ server:
 spring:
   application:
     name: home-iot-server
+  mvc:
+    async:
+      request-timeout: 1h
   datasource:
     url: jdbc:h2:mem:homeiot;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
     username: sa

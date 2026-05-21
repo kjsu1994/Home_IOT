@@ -1511,6 +1511,8 @@ function CameraPanel({
   onStartRecording,
   onStopRecording,
 }) {
+  const [displayRotated, setDisplayRotated] = useState(false)
+
   return (
     <section className="camera-workspace">
       <aside className="camera-list panel">
@@ -1541,9 +1543,19 @@ function CameraPanel({
       <section className="camera-stage panel">
         <div className="section-title">
           <span>{selectedCamera?.name || 'Camera stream'}</span>
-          <button className="refresh-button" type="button" onClick={onRefresh}>Refresh</button>
+          <div className="camera-title-actions">
+            <button
+              className={`refresh-button ${displayRotated ? 'active' : ''}`}
+              type="button"
+              disabled={!selectedCamera}
+              onClick={() => setDisplayRotated((rotated) => !rotated)}
+            >
+              Rotate 180
+            </button>
+            <button className="refresh-button" type="button" onClick={onRefresh}>Refresh</button>
+          </div>
         </div>
-        <CameraLiveView selectedCamera={selectedCamera} streamPath={streamPath} />
+        <CameraLiveView selectedCamera={selectedCamera} streamPath={streamPath} displayRotated={displayRotated} />
         <div className="camera-meta">
           <Info label="Online" value={selectedCamera?.online ? 'YES' : 'NO'} />
           <Info label="Camera" value={selectedCamera?.cameraReady ? 'READY' : 'WAITING'} />
@@ -1577,7 +1589,7 @@ function CameraPanel({
   )
 }
 
-function CameraLiveView({ selectedCamera, streamPath }) {
+function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
   const canvasRef = useRef(null)
   const [viewerStatus, setViewerStatus] = useState('Waiting')
   const [useMjpegFallback, setUseMjpegFallback] = useState(false)
@@ -1708,7 +1720,7 @@ function CameraLiveView({ selectedCamera, streamPath }) {
   }
 
   return (
-    <div className="camera-frame">
+    <div className={`camera-frame ${displayRotated ? 'display-rotated' : ''}`}>
       {useMjpegFallback ? (
         <img src={streamPath} alt={`${selectedCamera.name || selectedCamera.deviceId} live stream`} />
       ) : (
