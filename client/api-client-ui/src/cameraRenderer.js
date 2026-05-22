@@ -4,13 +4,30 @@ const BACKGROUND = [15 / 255, 23 / 255, 42 / 255, 1]
 const RENDER_PRESETS = {
   natural: {
     sharpness: 0,
+    maxSharpness: 0,
+    denoise: 0,
+    maxDenoise: 0,
     contrast: 1,
     saturation: 1,
+    edgeThreshold: 0.1,
   },
   sharp: {
     sharpness: 0.11,
+    maxSharpness: 0.15,
+    denoise: 0.035,
+    maxDenoise: 0.055,
     contrast: 1.04,
     saturation: 1.03,
+    edgeThreshold: 0.09,
+  },
+  detail: {
+    sharpness: 0.16,
+    maxSharpness: 0.22,
+    denoise: 0.07,
+    maxDenoise: 0.1,
+    contrast: 1.06,
+    saturation: 1.04,
+    edgeThreshold: 0.11,
   },
 }
 
@@ -20,6 +37,21 @@ export function createCameraRenderer(canvas, options = {}) {
     return webglRenderer
   }
   return createCanvas2dRenderer(canvas, options)
+}
+
+export async function decodeCameraFrame(blob) {
+  const decodeStartedAt = performance.now()
+  const decoded = await decodeBlob(blob)
+  const source = decoded.source
+  const width = source.width || source.naturalWidth
+  const height = source.height || source.naturalHeight
+  return {
+    source,
+    width,
+    height,
+    decodeMs: performance.now() - decodeStartedAt,
+    close: decoded.close,
+  }
 }
 
 function createWebglRenderer(canvas, options) {
@@ -63,8 +95,10 @@ class WebglCameraRenderer {
       image: gl.getUniformLocation(this.program, 'u_image'),
       texelSize: gl.getUniformLocation(this.program, 'u_texelSize'),
       sharpness: gl.getUniformLocation(this.program, 'u_sharpness'),
+      denoise: gl.getUniformLocation(this.program, 'u_denoise'),
       contrast: gl.getUniformLocation(this.program, 'u_contrast'),
       saturation: gl.getUniformLocation(this.program, 'u_saturation'),
+      edgeThreshold: gl.getUniformLocation(this.program, 'u_edgeThreshold'),
     }
 
     gl.useProgram(this.program)
@@ -82,25 +116,26 @@ class WebglCameraRenderer {
   }
 
   async render(blob, options = {}) {
-    const decodeStartedAt = performance.now()
-    const decoded = await decodeBlob(blob)
-    const decodeMs = performance.now() - decodeStartedAt
-    const source = decoded.source
-    const sourceWidth = source.width || source.naturalWidth
-    const sourceHeight = source.height || source.naturalHeight
+    const decoded = await decodeCameraFrame(blob)
+    try {
+      return this.renderDecoded(decoded, options)
+    } finally {
+      decoded.close()
+    }
+  }
 
+  renderDecoded(decoded, options = {}) {
     const renderStartedAt = performance.now()
-    this.draw(source, sourceWidth, sourceHeight, options)
+    this.draw(decoded.source, decoded.width, decoded.height, options)
     const renderMs = performance.now() - renderStartedAt
-    decoded.close()
 
     return {
-      decodeMs,
+      decodeMs: decoded.decodeMs,
       renderMs,
       renderer: this.rendererName,
       gpu: this.gpuName,
-      width: sourceWidth,
-      height: sourceHeight,
+      width: decoded.width,
+      height: decoded.height,
     }
   }
 
@@ -108,6 +143,7 @@ class WebglCameraRenderer {
     const gl = this.gl
     const target = resolveCanvasTarget(this.canvas, sourceWidth, sourceHeight, this.pixelRatioLimit)
     const preset = RENDER_PRESETS[options.preset] || RENDER_PRESETS.natural
+    const tunedPreset = tunePresetForDisplayScale(preset, target.drawWidth / sourceWidth)
     const texCoords = options.rotated ? ROTATED_TEX_COORDS : NATURAL_TEX_COORDS
 
     resizeCanvas(this.canvas, target.width, target.height)
@@ -132,9 +168,11 @@ class WebglCameraRenderer {
     gl.vertexAttribPointer(this.locations.texCoord, 2, gl.FLOAT, false, 0, 0)
 
     gl.uniform2f(this.locations.texelSize, 1 / sourceWidth, 1 / sourceHeight)
-    gl.uniform1f(this.locations.sharpness, preset.sharpness)
+    gl.uniform1f(this.locations.sharpness, tunedPreset.sharpness)
+    gl.uniform1f(this.locations.denoise, tunedPreset.denoise)
     gl.uniform1f(this.locations.contrast, preset.contrast)
     gl.uniform1f(this.locations.saturation, preset.saturation)
+    gl.uniform1f(this.locations.edgeThreshold, preset.edgeThreshold)
 
     gl.viewport(target.drawX, target.drawY, target.drawWidth, target.drawHeight)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
@@ -167,25 +205,26 @@ class Canvas2dCameraRenderer {
   }
 
   async render(blob, options = {}) {
-    const decodeStartedAt = performance.now()
-    const decoded = await decodeBlob(blob)
-    const decodeMs = performance.now() - decodeStartedAt
-    const source = decoded.source
-    const sourceWidth = source.width || source.naturalWidth
-    const sourceHeight = source.height || source.naturalHeight
+    const decoded = await decodeCameraFrame(blob)
+    try {
+      return this.renderDecoded(decoded, options)
+    } finally {
+      decoded.close()
+    }
+  }
 
+  renderDecoded(decoded, options = {}) {
     const renderStartedAt = performance.now()
-    this.draw(source, sourceWidth, sourceHeight, options)
+    this.draw(decoded.source, decoded.width, decoded.height, options)
     const renderMs = performance.now() - renderStartedAt
-    decoded.close()
 
     return {
-      decodeMs,
+      decodeMs: decoded.decodeMs,
       renderMs,
       renderer: 'Canvas2D',
       gpu: 'unavailable',
-      width: sourceWidth,
-      height: sourceHeight,
+      width: decoded.width,
+      height: decoded.height,
     }
   }
 
@@ -278,6 +317,19 @@ function resizeCanvas(canvas, width, height) {
   }
 }
 
+function tunePresetForDisplayScale(preset, displayScale) {
+  if (displayScale <= 1 || preset.sharpness === 0) {
+    return preset
+  }
+
+  const boost = Math.min(0.38, (displayScale - 1) * 0.18)
+  return {
+    ...preset,
+    sharpness: Math.min(preset.maxSharpness, preset.sharpness * (1 + boost)),
+    denoise: Math.min(preset.maxDenoise, preset.denoise * (1 + boost * 0.5)),
+  }
+}
+
 function resolveGpuName(gl) {
   const debugInfo = gl.getExtension('WEBGL_debug_renderer_info')
   if (!debugInfo) {
@@ -359,8 +411,10 @@ precision mediump float;
 uniform sampler2D u_image;
 uniform vec2 u_texelSize;
 uniform float u_sharpness;
+uniform float u_denoise;
 uniform float u_contrast;
 uniform float u_saturation;
+uniform float u_edgeThreshold;
 varying vec2 v_texCoord;
 
 vec3 applySaturation(vec3 color, float saturation) {
@@ -374,7 +428,11 @@ void main() {
   vec3 south = texture2D(u_image, v_texCoord + vec2(0.0, u_texelSize.y)).rgb;
   vec3 west = texture2D(u_image, v_texCoord + vec2(-u_texelSize.x, 0.0)).rgb;
   vec3 east = texture2D(u_image, v_texCoord + vec2(u_texelSize.x, 0.0)).rgb;
-  vec3 sharpened = center * (1.0 + 4.0 * u_sharpness) - (north + south + west + east) * u_sharpness;
+  vec3 blur = (north + south + west + east) * 0.25;
+  float edge = length(center - blur);
+  float flatArea = 1.0 - smoothstep(u_edgeThreshold, u_edgeThreshold * 2.0, edge);
+  vec3 denoised = mix(center, blur, u_denoise * flatArea);
+  vec3 sharpened = denoised + (denoised - blur) * (u_sharpness * 4.0);
   vec3 color = clamp(sharpened, 0.0, 1.0);
   color = (color - 0.5) * u_contrast + 0.5;
   color = applySaturation(color, u_saturation);

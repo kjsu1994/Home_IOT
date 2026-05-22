@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import './App.css'
-import { createCameraRenderer } from './cameraRenderer.js'
+import { createCameraRenderer, decodeCameraFrame } from './cameraRenderer.js'
 import { clearStoredAuth, fetchJson, hasStoredAuth, patchJson, postJson, resolveApiPath, storeTokens } from './utils/api.js'
 import { createQrSvgDataUri } from './utils/qr.js'
 
@@ -1563,6 +1563,14 @@ function CameraPanel({
               >
                 Sharp
               </button>
+              <button
+                className={renderPreset === 'detail' ? 'active' : ''}
+                type="button"
+                disabled={!selectedCamera}
+                onClick={() => setRenderPreset('detail')}
+              >
+                Detail
+              </button>
             </div>
             <button
               className={`refresh-button ${displayRotated ? 'active' : ''}`}
@@ -1666,7 +1674,9 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
     let renderedFrames = 0
     let droppedFrames = 0
     let pendingBlob = null
-    let drawing = false
+    let pendingFrame = null
+    let decoding = false
+    let drawScheduled = false
     let renderer = null
     let lastStatsUpdateAt = 0
     let currentStats = {
@@ -1709,34 +1719,73 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
     }
 
     const scheduleDraw = () => {
+      if (drawScheduled) {
+        return
+      }
+      drawScheduled = true
       window.requestAnimationFrame(() => {
-        void drawLatestFrame()
+        drawScheduled = false
+        drawReadyFrame()
       })
     }
 
-    const drawLatestFrame = async () => {
-      if (stopped) {
+    const startDecodeIfIdle = () => {
+      if (stopped || decoding || !pendingBlob) {
         return
       }
       const blob = pendingBlob
       pendingBlob = null
-      if (!blob) {
-        drawing = false
+      decoding = true
+
+      decodeCameraFrame(blob)
+        .then((decodedFrame) => {
+          if (stopped) {
+            decodedFrame.close()
+            return
+          }
+          if (pendingFrame) {
+            pendingFrame.close()
+            droppedFrames += 1
+          }
+          pendingFrame = decodedFrame
+          publishStats({
+            decodeMs: decodedFrame.decodeMs,
+            droppedFrames,
+          })
+          scheduleDraw()
+        })
+        .catch((error) => {
+          console.warn('Camera frame decode failed.', error)
+          if (!stopped && renderedFrames === 0) {
+            setUseMjpegFallback(true)
+            setViewerStatus('MJPEG fallback')
+          }
+        })
+        .finally(() => {
+          decoding = false
+          if (!stopped && pendingBlob) {
+            startDecodeIfIdle()
+          }
+        })
+    }
+
+    const drawReadyFrame = () => {
+      if (stopped || !pendingFrame) {
         return
       }
-
-      drawing = true
+      const decodedFrame = pendingFrame
+      pendingFrame = null
       const frameRenderer = ensureRenderer()
       if (!frameRenderer) {
-        drawing = false
+        decodedFrame.close()
         return
       }
 
       try {
-        const result = await frameRenderer.render(blob, renderSettingsRef.current)
-        const now = Date.now()
+        const result = frameRenderer.renderDecoded(decodedFrame, renderSettingsRef.current)
+        const renderedAt = Date.now()
         renderedFrames += 1
-        pushTimestamp(renderedAtWindow, now)
+        pushTimestamp(renderedAtWindow, renderedAt)
         if (renderedFrames === 1) {
           setViewerStatus('Live')
         }
@@ -1744,7 +1793,7 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
           renderFps: calculateWindowFps(renderedAtWindow),
           renderedFrames,
           droppedFrames,
-          decodeMs: result.decodeMs,
+          decodeMs: decodedFrame.decodeMs,
           renderMs: result.renderMs,
           renderer: result.renderer,
           gpu: result.gpu,
@@ -1756,10 +1805,9 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
           setViewerStatus('MJPEG fallback')
         }
       } finally {
-        if (!stopped && pendingBlob) {
+        decodedFrame.close()
+        if (!stopped && pendingFrame) {
           scheduleDraw()
-        } else {
-          drawing = false
         }
       }
     }
@@ -1786,9 +1834,7 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
         lastReceivedAt: new Date(now).toISOString(),
       })
       pendingBlob = event.data
-      if (!drawing) {
-        scheduleDraw()
-      }
+      startDecodeIfIdle()
     }
     webSocket.onerror = () => {
       if (!stopped && renderedFrames === 0) {
@@ -1806,6 +1852,8 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
     return () => {
       stopped = true
       pendingBlob = null
+      pendingFrame?.close()
+      pendingFrame = null
       renderer?.destroy?.()
       webSocket.close()
     }
