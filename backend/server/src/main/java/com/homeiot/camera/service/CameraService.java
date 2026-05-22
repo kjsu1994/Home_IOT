@@ -49,7 +49,7 @@ public class CameraService {
     private static final Duration INGEST_FPS_WINDOW = Duration.ofSeconds(10);
     private static final Duration INGEST_LOG_INTERVAL = Duration.ofSeconds(10);
     private static final String MJPEG_BOUNDARY = "homeiotframe";
-    private static final long LIVE_UPLOAD_INTERVAL_MS = 200;
+    private static final long LIVE_UPLOAD_INTERVAL_MS = 100;
     private static final long IDLE_UPLOAD_INTERVAL_MS = 3000;
     private static final int LIVE_JPEG_QUALITY = 28;
     private static final int IDLE_JPEG_QUALITY = 35;
@@ -147,9 +147,11 @@ public class CameraService {
 
     public AutoCloseable registerViewer(String deviceId) {
         AtomicInteger counter = viewerCounts.computeIfAbsent(deviceId, ignored -> new AtomicInteger());
-        counter.incrementAndGet();
+        int currentCount = counter.incrementAndGet();
+        log.info("camera viewer registered deviceId={} viewers={}", deviceId, currentCount);
         return () -> {
             int nextCount = counter.updateAndGet(value -> Math.max(0, value - 1));
+            log.info("camera viewer closed deviceId={} viewers={}", deviceId, nextCount);
             if (nextCount == 0) {
                 viewerCounts.remove(deviceId, counter);
             }
@@ -164,6 +166,12 @@ public class CameraService {
             recording = runtime.activeRecording != null;
         }
         boolean live = viewerCount > 0 || recording;
+        log.debug("camera control deviceId={} mode={} intervalMs={} viewers={} recording={}",
+                deviceId,
+                live ? "LIVE" : "IDLE",
+                live ? LIVE_UPLOAD_INTERVAL_MS : IDLE_UPLOAD_INTERVAL_MS,
+                viewerCount,
+                recording);
         return new CameraControlResponse(
                 live ? "LIVE" : "IDLE",
                 live ? LIVE_UPLOAD_INTERVAL_MS : IDLE_UPLOAD_INTERVAL_MS,
