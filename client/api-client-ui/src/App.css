@@ -480,6 +480,14 @@ h2 {
   background: var(--slate-900);
 }
 
+.camera-frame:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
+  border-radius: 0;
+  background: #000;
+}
+
 .camera-frame img,
 .camera-frame canvas {
   display: block;
@@ -499,15 +507,51 @@ h2 {
   filter: contrast(1.04) saturate(1.03);
 }
 
+.camera-frame:fullscreen img,
+.camera-frame:fullscreen canvas,
+.camera-frame.fullscreen-active img,
+.camera-frame.fullscreen-active canvas {
+  width: 100vw;
+  height: 100vh;
+  max-height: none;
+}
+
 .camera-media-rotated {
   transform: rotate(180deg);
+}
+
+.camera-viewer-controls {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  display: flex;
+  gap: 8px;
+  z-index: 2;
+}
+
+.camera-viewer-button {
+  min-width: 44px;
+  min-height: 38px;
+  border: 1px solid rgba(226, 232, 240, 0.32);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.68);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.camera-viewer-button:hover {
+  background: rgba(15, 23, 42, 0.88);
 }
 
 .camera-viewer-status {
   position: absolute;
   right: 12px;
   bottom: 12px;
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   gap: 6px;
   max-width: calc(100% - 24px);
@@ -517,6 +561,16 @@ h2 {
   color: var(--slate-100);
   font-size: 12px;
   line-height: 1.2;
+}
+
+.camera-frame.stats-visible .camera-viewer-status {
+  display: flex;
+}
+
+.camera-frame:fullscreen .camera-viewer-status,
+.camera-frame.fullscreen-active .camera-viewer-status {
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
 }
 
 .camera-viewer-status span:not(:last-child)::after {
@@ -1500,6 +1554,25 @@ h2 {
 
   .camera-frame {
     min-height: 260px;
+  }
+
+  .camera-frame img,
+  .camera-frame canvas {
+    max-height: 64vh;
+  }
+
+  .camera-viewer-status {
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(10px, env(safe-area-inset-bottom));
+    max-width: none;
+    border-radius: 14px;
+  }
+
+  .camera-frame.fullscreen-active .camera-viewer-status,
+  .camera-frame:fullscreen .camera-viewer-status {
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
   }
 }
 

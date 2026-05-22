@@ -1514,6 +1514,14 @@ function CameraPanel({
 }) {
   const [displayRotated, setDisplayRotated] = useState(false)
   const [renderPreset, setRenderPreset] = useState('sharp')
+  const snapshotUrl = streamPath ? resolveCameraSnapshotUrl(streamPath) : ''
+
+  const openSnapshot = () => {
+    if (!snapshotUrl) {
+      return
+    }
+    window.open(snapshotUrl, '_blank', 'noopener,noreferrer')
+  }
 
   return (
     <section className="camera-workspace">
@@ -1580,6 +1588,14 @@ function CameraPanel({
             >
               Rotate 180
             </button>
+            <button
+              className="refresh-button"
+              type="button"
+              disabled={!selectedCamera || !snapshotUrl}
+              onClick={openSnapshot}
+            >
+              Raw JPEG
+            </button>
             <button className="refresh-button" type="button" onClick={onRefresh}>Refresh</button>
           </div>
         </div>
@@ -1630,10 +1646,13 @@ function CameraPanel({
 }
 
 function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPreset }) {
+  const frameRef = useRef(null)
   const canvasRef = useRef(null)
   const renderSettingsRef = useRef({ preset: renderPreset, rotated: displayRotated })
   const [viewerStatus, setViewerStatus] = useState('Waiting')
   const [useMjpegFallback, setUseMjpegFallback] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showStats, setShowStats] = useState(false)
   const [viewerStats, setViewerStats] = useState({
     sourceFps: 0,
     renderFps: 0,
@@ -1652,8 +1671,38 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
   }, [displayRotated, renderPreset])
 
   useEffect(() => {
+    const updateFullscreenState = () => {
+      const active = document.fullscreenElement === frameRef.current
+      setIsFullscreen(active)
+      if (!active) {
+        unlockCameraOrientation()
+      }
+    }
+    document.addEventListener('fullscreenchange', updateFullscreenState)
+    return () => document.removeEventListener('fullscreenchange', updateFullscreenState)
+  }, [])
+
+  const toggleFullscreen = async () => {
+    const frame = frameRef.current
+    if (!frame) {
+      return
+    }
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+        return
+      }
+      await frame.requestFullscreen({ navigationUI: 'hide' })
+      await lockCameraLandscape()
+    } catch (error) {
+      console.warn('Camera fullscreen failed.', error)
+    }
+  }
+
+  useEffect(() => {
     setViewerStatus(selectedCamera && streamPath ? 'Connecting' : 'Waiting')
     setUseMjpegFallback(false)
+    setShowStats(false)
     setViewerStats({
       sourceFps: 0,
       renderFps: 0,
@@ -1693,8 +1742,14 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
     }
     const receivedAtWindow = []
     const renderedAtWindow = []
-    const webSocket = new WebSocket(resolveCameraWebSocketUrl(streamPath))
-    webSocket.binaryType = 'blob'
+    const streamUrl = resolveCameraWebSocketUrl(streamPath)
+    let webSocket = null
+    let reconnectTimer = 0
+    let stallTimer = 0
+    let reconnectAttempts = 0
+    let lastFrameAt = Date.now()
+    let liveSinceLastConnect = false
+    let fallbackActive = false
 
     const publishStats = (patch, force = false) => {
       currentStats = { ...currentStats, ...patch }
@@ -1703,6 +1758,17 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
         lastStatsUpdateAt = now
         setViewerStats(currentStats)
       }
+    }
+
+    const activateMjpegFallback = () => {
+      if (fallbackActive || stopped) {
+        return
+      }
+      fallbackActive = true
+      window.clearTimeout(reconnectTimer)
+      webSocket?.close()
+      setUseMjpegFallback(true)
+      setViewerStatus('MJPEG fallback')
     }
 
     const ensureRenderer = () => {
@@ -1757,8 +1823,7 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
         .catch((error) => {
           console.warn('Camera frame decode failed.', error)
           if (!stopped && renderedFrames === 0) {
-            setUseMjpegFallback(true)
-            setViewerStatus('MJPEG fallback')
+            activateMjpegFallback()
           }
         })
         .finally(() => {
@@ -1786,7 +1851,8 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
         const renderedAt = Date.now()
         renderedFrames += 1
         pushTimestamp(renderedAtWindow, renderedAt)
-        if (renderedFrames === 1) {
+        if (!liveSinceLastConnect) {
+          liveSinceLastConnect = true
           setViewerStatus('Live')
         }
         publishStats({
@@ -1801,8 +1867,7 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
       } catch (error) {
         console.warn('Camera frame render failed.', error)
         if (renderedFrames === 0) {
-          setUseMjpegFallback(true)
-          setViewerStatus('MJPEG fallback')
+          activateMjpegFallback()
         }
       } finally {
         decodedFrame.close()
@@ -1812,63 +1877,105 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
       }
     }
 
-    webSocket.onopen = () => {
-      if (!stopped) {
-        setViewerStatus('Connected')
-      }
-    }
-    webSocket.onmessage = (event) => {
-      if (stopped || !(event.data instanceof Blob)) {
+    const scheduleReconnect = (reason) => {
+      if (stopped || fallbackActive) {
         return
       }
-      if (pendingBlob) {
-        droppedFrames += 1
+      if (webSocket) {
+        webSocket.onopen = null
+        webSocket.onmessage = null
+        webSocket.onerror = null
+        webSocket.onclose = null
+        webSocket.close()
+        webSocket = null
       }
-      const now = Date.now()
-      pushTimestamp(receivedAtWindow, now)
-      publishStats({
-        sourceFps: calculateWindowFps(receivedAtWindow),
-        frameBytes: event.data.size,
-        renderedFrames,
-        droppedFrames,
-        lastReceivedAt: new Date(now).toISOString(),
-      })
-      pendingBlob = event.data
-      startDecodeIfIdle()
+      window.clearTimeout(reconnectTimer)
+      reconnectAttempts += 1
+      const delayMs = Math.min(3000, 250 * reconnectAttempts)
+      setViewerStatus(reason === 'stalled' ? 'Reconnecting' : 'Disconnected')
+      reconnectTimer = window.setTimeout(connectWebSocket, delayMs)
     }
-    webSocket.onerror = () => {
-      if (!stopped && renderedFrames === 0) {
-        setUseMjpegFallback(true)
-        setViewerStatus('MJPEG fallback')
+
+    const connectWebSocket = () => {
+      if (stopped || fallbackActive) {
+        return
       }
-    }
-    webSocket.onclose = () => {
-      if (!stopped && renderedFrames === 0) {
-        setUseMjpegFallback(true)
-        setViewerStatus('MJPEG fallback')
+      const socket = new WebSocket(streamUrl)
+      webSocket = socket
+      socket.binaryType = 'blob'
+      liveSinceLastConnect = false
+      lastFrameAt = Date.now()
+      setViewerStatus(reconnectAttempts > 0 ? 'Reconnecting' : 'Connecting')
+
+      socket.onopen = () => {
+        if (stopped || socket !== webSocket) {
+          return
+        }
+        reconnectAttempts = 0
+        lastFrameAt = Date.now()
+        setViewerStatus('Connected')
       }
+
+      socket.onmessage = (event) => {
+        if (stopped || socket !== webSocket || !(event.data instanceof Blob)) {
+          return
+        }
+        if (pendingBlob) {
+          droppedFrames += 1
+        }
+        const now = Date.now()
+        lastFrameAt = now
+        pushTimestamp(receivedAtWindow, now)
+        publishStats({
+          sourceFps: calculateWindowFps(receivedAtWindow),
+          frameBytes: event.data.size,
+          renderedFrames,
+          droppedFrames,
+          lastReceivedAt: new Date(now).toISOString(),
+        })
+        pendingBlob = event.data
+        startDecodeIfIdle()
+      }
+
+      socket.onerror = () => scheduleReconnect('error')
+      socket.onclose = () => scheduleReconnect('closed')
     }
+
+    connectWebSocket()
+    stallTimer = window.setInterval(() => {
+      if (stopped || fallbackActive || !webSocket || webSocket.readyState !== WebSocket.OPEN) {
+        return
+      }
+      if (Date.now() - lastFrameAt >= 5000) {
+        scheduleReconnect('stalled')
+      }
+    }, 1000)
 
     return () => {
       stopped = true
+      window.clearTimeout(reconnectTimer)
+      window.clearInterval(stallTimer)
       pendingBlob = null
       pendingFrame?.close()
       pendingFrame = null
       renderer?.destroy?.()
-      webSocket.close()
+      webSocket?.close()
     }
   }, [selectedCamera?.deviceId, streamPath])
 
   if (!selectedCamera || !streamPath) {
     return (
-      <div className="camera-frame">
+      <div className="camera-frame" ref={frameRef}>
         <Empty text={selectedCamera ? 'Waiting for camera stream.' : 'Select a camera.'} />
       </div>
     )
   }
 
   return (
-    <div className="camera-frame">
+    <div
+      className={`camera-frame ${isFullscreen ? 'fullscreen-active' : ''} ${showStats ? 'stats-visible' : ''}`}
+      ref={frameRef}
+    >
       {useMjpegFallback ? (
         <img
           className={displayRotated ? 'camera-media-rotated' : ''}
@@ -1878,6 +1985,23 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
       ) : (
         <canvas ref={canvasRef} aria-label={`${selectedCamera.name || selectedCamera.deviceId} live stream`} />
       )}
+      <div className="camera-viewer-controls">
+        <button
+          className="camera-viewer-button"
+          type="button"
+          aria-pressed={showStats}
+          onClick={() => setShowStats((visible) => !visible)}
+        >
+          {showStats ? 'Hide stats' : 'Stats'}
+        </button>
+        <button
+          className="camera-viewer-button"
+          type="button"
+          onClick={toggleFullscreen}
+        >
+          {isFullscreen ? 'Exit' : 'Full screen'}
+        </button>
+      </div>
       <div className="camera-viewer-status">
         <span>{viewerStatus}</span>
         <span>{formatFps(viewerStats.sourceFps)} source</span>
@@ -1899,6 +2023,35 @@ function resolveCameraWebSocketUrl(streamPath) {
   const url = new URL(path, window.location.href)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   return url.toString()
+}
+
+function resolveCameraSnapshotUrl(streamPath) {
+  const path = streamPath.replace('/mjpeg', '/snapshot')
+  return new URL(path, window.location.href).toString()
+}
+
+async function lockCameraLandscape() {
+  const orientation = window.screen?.orientation
+  if (!orientation?.lock) {
+    return
+  }
+  try {
+    await orientation.lock('landscape')
+  } catch (error) {
+    console.warn('Camera landscape lock failed.', error)
+  }
+}
+
+function unlockCameraOrientation() {
+  const orientation = window.screen?.orientation
+  if (!orientation?.unlock) {
+    return
+  }
+  try {
+    orientation.unlock()
+  } catch (error) {
+    console.warn('Camera orientation unlock failed.', error)
+  }
 }
 
 function pushTimestamp(windowValues, timestamp) {

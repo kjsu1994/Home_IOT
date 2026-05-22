@@ -120,6 +120,17 @@ public class CameraService {
         };
     }
 
+    public CameraFramePayload latestSnapshot(String deviceId, String token) {
+        validateStreamToken(deviceId, token);
+        CameraRuntime runtime = runtime(deviceId);
+        synchronized (runtime) {
+            if (runtime.latestFrame == null) {
+                throw new NotFoundException("camera frame not found: " + deviceId);
+            }
+            return toPayload(runtime.latestFrame);
+        }
+    }
+
     public boolean isValidStreamToken(String deviceId, String token) {
         return isTokenValid(deviceId, token);
     }

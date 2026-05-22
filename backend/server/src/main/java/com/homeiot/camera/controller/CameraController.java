@@ -52,6 +52,21 @@ public class CameraController {
                 .body(cameraService.streamMjpeg(deviceId, token));
     }
 
+    @GetMapping("/cameras/{deviceId}/snapshot")
+    public ResponseEntity<byte[]> snapshot(@PathVariable String deviceId,
+                                           @RequestParam String token) {
+        var frame = cameraService.latestSnapshot(deviceId, token);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header(HttpHeaders.PRAGMA, "no-cache")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + deviceId + "-" + frame.sequence() + ".jpg\"")
+                .header("X-Camera-Width", frame.width() == null ? "" : frame.width().toString())
+                .header("X-Camera-Height", frame.height() == null ? "" : frame.height().toString())
+                .header("X-Camera-Sequence", Long.toString(frame.sequence()))
+                .contentType(MediaType.IMAGE_JPEG)
+                .body(frame.jpegBytes());
+    }
+
     @PostMapping("/cameras/{deviceId}/recordings/start")
     public ApiResponse<CameraRecordingResponse> startRecording(@PathVariable String deviceId) {
         return ApiResponse.ok(cameraService.startRecording(deviceId));
