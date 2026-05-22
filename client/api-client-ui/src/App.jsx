@@ -1563,6 +1563,13 @@ function CameraPanel({
           <Info label="Ingest FPS" value={formatFps(selectedCamera?.ingestFps)} />
           <Info label="Frame size" value={formatBytes(selectedCamera?.frameBytes)} />
           <Info label="Frame age" value={formatDurationMs(selectedCamera?.lastFrameAgeMs)} />
+          <Info label="Target interval" value={formatDurationMs(selectedCamera?.appliedIntervalMs)} />
+          <Info label="Capture" value={formatDurationMs(selectedCamera?.captureMs)} />
+          <Info label="Upload" value={formatDurationMs(selectedCamera?.uploadMs)} />
+          <Info label="Total" value={formatDurationMs(selectedCamera?.totalMs)} />
+          <Info label="FW bytes" value={formatBytes(selectedCamera?.firmwareFrameBytes)} />
+          <Info label="Failures" value={`${formatCount(selectedCamera?.captureFailures)} / ${formatCount(selectedCamera?.uploadFailures)}`} />
+          <Info label="Sensor" value={formatCameraSensor(selectedCamera)} />
         </div>
         <div className="command-bar">
           <button className="command-button" type="button" disabled={!selectedCamera || recording} onClick={onStartRecording}>
@@ -1612,6 +1619,7 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
     let renderedFrames = 0
     let pendingObjectUrl = ''
     let drawing = false
+    let lastStatsUpdateAt = 0
     const receivedAtWindow = []
     const webSocket = new WebSocket(resolveCameraWebSocketUrl(streamPath))
     webSocket.binaryType = 'blob'
@@ -1644,10 +1652,6 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
           if (renderedFrames === 1) {
             setViewerStatus('Live')
           }
-          setViewerStats((current) => ({
-            ...current,
-            renderedFrames,
-          }))
         }
         URL.revokeObjectURL(objectUrl)
         window.requestAnimationFrame(drawLatestFrame)
@@ -1678,12 +1682,16 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
       }
       const elapsed = receivedAtWindow.length > 1 ? Math.max(1, receivedAtWindow[receivedAtWindow.length - 1] - receivedAtWindow[0]) : 0
       const fps = elapsed ? ((receivedAtWindow.length - 1) * 1000) / elapsed : 0
-      setViewerStats((current) => ({
-        ...current,
-        fps,
-        frameBytes: event.data.size,
-        lastReceivedAt: new Date(now).toISOString(),
-      }))
+      if (now - lastStatsUpdateAt >= 250) {
+        lastStatsUpdateAt = now
+        setViewerStats((current) => ({
+          ...current,
+          fps,
+          frameBytes: event.data.size,
+          renderedFrames,
+          lastReceivedAt: new Date(now).toISOString(),
+        }))
+      }
       pendingObjectUrl = URL.createObjectURL(event.data)
       if (!drawing) {
         drawLatestFrame()
@@ -1791,6 +1799,23 @@ function formatDurationMs(value) {
   return `${(number / 1000).toFixed(1)} s`
 }
 
+function formatCount(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number < 0) {
+    return '0'
+  }
+  return String(Math.round(number))
+}
+
+function formatCameraSensor(camera) {
+  if (!camera?.sensorName && !camera?.sensorPid) {
+    return '-'
+  }
+  const pid = Number(camera?.sensorPid)
+  const pidLabel = Number.isFinite(pid) && pid > 0 ? `0x${pid.toString(16).toUpperCase()}` : ''
+  return [camera?.sensorName, pidLabel].filter(Boolean).join(' / ')
+}
+
 function consumeClaimCallback() {
   const params = new URLSearchParams(window.location.search)
   const deviceId = params.get('d') || params.get('deviceId')
@@ -1884,6 +1909,17 @@ function normalizeCamera(camera) {
     frameBytes: camera?.frame_bytes ?? camera?.frameBytes ?? 0,
     ingestFps: Number(camera?.ingest_fps ?? camera?.ingestFps ?? 0),
     lastFrameAgeMs: Number(camera?.last_frame_age_ms ?? camera?.lastFrameAgeMs ?? 0),
+    captureMs: Number(camera?.capture_ms ?? camera?.captureMs ?? 0),
+    uploadMs: Number(camera?.upload_ms ?? camera?.uploadMs ?? 0),
+    totalMs: Number(camera?.total_ms ?? camera?.totalMs ?? 0),
+    firmwareFrameBytes: Number(camera?.firmware_frame_bytes ?? camera?.firmwareFrameBytes ?? 0),
+    appliedIntervalMs: Number(camera?.applied_interval_ms ?? camera?.appliedIntervalMs ?? 0),
+    captureFailures: Number(camera?.capture_failures ?? camera?.captureFailures ?? 0),
+    uploadFailures: Number(camera?.upload_failures ?? camera?.uploadFailures ?? 0),
+    cameraStreaming: Boolean(camera?.camera_streaming ?? camera?.cameraStreaming),
+    cameraControlReceived: Boolean(camera?.camera_control_received ?? camera?.cameraControlReceived),
+    sensorName: camera?.sensor_name ?? camera?.sensorName ?? '',
+    sensorPid: Number(camera?.sensor_pid ?? camera?.sensorPid ?? 0),
   }
 }
 

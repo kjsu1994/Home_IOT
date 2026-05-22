@@ -1,9 +1,11 @@
 package com.homeiot.camera.websocket;
 
 import com.homeiot.camera.service.CameraService;
+import com.homeiot.camera.service.CameraService.CameraAcceptMetrics;
 import com.homeiot.device.entity.Device;
 import com.homeiot.device.repository.DeviceRepository;
 import com.homeiot.device.service.DeviceTokenService;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +17,11 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.nio.ByteBuffer;
+import java.time.Duration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
 @Component
@@ -23,11 +30,22 @@ public class CameraWebSocketHandler extends BinaryWebSocketHandler {
     private static final String DEVICE_API_KEY_HEADER = "X-Device-Api-Key";
     private static final Pattern DEVICE_PATH = Pattern.compile("^/api/devices/([^/]+)/camera/ws$");
     private static final int CAMERA_MESSAGE_SIZE_LIMIT_BYTES = 256 * 1024;
+    private static final Duration INGEST_METRICS_LOG_INTERVAL = Duration.ofSeconds(10);
 
     private final CameraService cameraService;
     private final DeviceRepository deviceRepository;
     private final DeviceTokenService deviceTokenService;
     private final String bootstrapDeviceApiKey;
+    private final ExecutorService ingestExecutor = Executors.newSingleThreadExecutor();
+    private final AtomicLong metricFrames = new AtomicLong();
+    private final AtomicLong metricBytes = new AtomicLong();
+    private final AtomicLong metricCopyMicros = new AtomicLong();
+    private final AtomicLong metricQueueMicros = new AtomicLong();
+    private final AtomicLong metricAcceptMicros = new AtomicLong();
+    private final AtomicLong metricUpdateMicros = new AtomicLong();
+    private final AtomicLong metricNotifyMicros = new AtomicLong();
+    private final AtomicLong metricRecordingMicros = new AtomicLong();
+    private volatile long lastMetricsLogAt = System.currentTimeMillis();
 
     public CameraWebSocketHandler(CameraService cameraService,
                                   DeviceRepository deviceRepository,
@@ -70,6 +88,7 @@ public class CameraWebSocketHandler extends BinaryWebSocketHandler {
             return;
         }
 
+        long receivedAt = System.nanoTime();
         ByteBuffer payload = message.getPayload();
         if (payload.remaining() < 5) {
             return;
@@ -79,7 +98,89 @@ public class CameraWebSocketHandler extends BinaryWebSocketHandler {
         int height = Short.toUnsignedInt(payload.getShort());
         byte[] jpegBytes = new byte[payload.remaining()];
         payload.get(jpegBytes);
-        cameraService.acceptFrame(deviceId, jpegBytes, width, height);
+        long copiedAt = System.nanoTime();
+        try {
+            ingestExecutor.execute(() -> acceptFrame(deviceId, jpegBytes, width, height, receivedAt, copiedAt));
+        } catch (RejectedExecutionException exception) {
+            log.warn("camera ingest rejected deviceId={} bytes={}", deviceId, jpegBytes.length);
+        }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        ingestExecutor.shutdownNow();
+    }
+
+    private void acceptFrame(String deviceId,
+                             byte[] jpegBytes,
+                             Integer width,
+                             Integer height,
+                             long receivedAt,
+                             long copiedAt) {
+        long acceptStartedAt = System.nanoTime();
+        CameraAcceptMetrics metrics = cameraService.acceptFrameWithMetrics(deviceId, jpegBytes, width, height);
+        long finishedAt = System.nanoTime();
+        recordMetrics(
+                deviceId,
+                jpegBytes.length,
+                microsBetween(receivedAt, copiedAt),
+                microsBetween(copiedAt, acceptStartedAt),
+                microsBetween(acceptStartedAt, finishedAt),
+                metrics
+        );
+    }
+
+    private void recordMetrics(String deviceId,
+                               long bytes,
+                               long copyMicros,
+                               long queueMicros,
+                               long acceptMicros,
+                               CameraAcceptMetrics metrics) {
+        metricFrames.incrementAndGet();
+        metricBytes.addAndGet(bytes);
+        metricCopyMicros.addAndGet(copyMicros);
+        metricQueueMicros.addAndGet(queueMicros);
+        metricAcceptMicros.addAndGet(acceptMicros);
+        metricUpdateMicros.addAndGet(metrics.updateMicros());
+        metricNotifyMicros.addAndGet(metrics.notifyMicros());
+        metricRecordingMicros.addAndGet(metrics.recordingMicros());
+
+        long now = System.currentTimeMillis();
+        if (now - lastMetricsLogAt < INGEST_METRICS_LOG_INTERVAL.toMillis()) {
+            return;
+        }
+
+        synchronized (this) {
+            now = System.currentTimeMillis();
+            if (now - lastMetricsLogAt < INGEST_METRICS_LOG_INTERVAL.toMillis()) {
+                return;
+            }
+            lastMetricsLogAt = now;
+            long frames = drain(metricFrames);
+            if (frames == 0) {
+                return;
+            }
+            log.info("camera websocket ingest deviceId={} frames={} bytes={} avgCopyUs={} avgQueueUs={} avgAcceptUs={} avgUpdateUs={} avgNotifyUs={} avgRecordUs={} listeners={} recording={}",
+                    deviceId,
+                    frames,
+                    drain(metricBytes),
+                    drain(metricCopyMicros) / frames,
+                    drain(metricQueueMicros) / frames,
+                    drain(metricAcceptMicros) / frames,
+                    drain(metricUpdateMicros) / frames,
+                    drain(metricNotifyMicros) / frames,
+                    drain(metricRecordingMicros) / frames,
+                    metrics.listenerCount(),
+                    metrics.recordingActive());
+        }
+    }
+
+    private long drain(AtomicLong value) {
+        return value.getAndSet(0);
+    }
+
+    private long microsBetween(long startedAt, long finishedAt) {
+        return Math.max(0, (finishedAt - startedAt) / 1000);
     }
 
     private String deviceId(WebSocketSession session) {

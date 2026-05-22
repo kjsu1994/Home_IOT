@@ -48,12 +48,13 @@ public class CameraService {
     private static final Duration FRAME_WAIT_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration INGEST_FPS_WINDOW = Duration.ofSeconds(10);
     private static final Duration INGEST_LOG_INTERVAL = Duration.ofSeconds(10);
+    private static final Duration STATUS_LOG_INTERVAL = Duration.ofSeconds(10);
     private static final String MJPEG_BOUNDARY = "homeiotframe";
-    private static final long LIVE_UPLOAD_INTERVAL_MS = 100;
+    private static final long LIVE_UPLOAD_INTERVAL_MS = 75;
     private static final long IDLE_UPLOAD_INTERVAL_MS = 3000;
-    private static final int LIVE_JPEG_QUALITY = 28;
+    private static final int LIVE_JPEG_QUALITY = 32;
     private static final int IDLE_JPEG_QUALITY = 35;
-    private static final String LIVE_FRAME_SIZE = "VGA";
+    private static final String LIVE_FRAME_SIZE = "HVGA";
     private static final String IDLE_FRAME_SIZE = "QVGA";
 
     private final DeviceRepository deviceRepository;
@@ -183,23 +184,75 @@ public class CameraService {
     }
 
     public void acceptFrame(String deviceId, byte[] jpegBytes, Integer width, Integer height) {
+        acceptFrameWithMetrics(deviceId, jpegBytes, width, height);
+    }
+
+    public CameraAcceptMetrics acceptFrameWithMetrics(String deviceId, byte[] jpegBytes, Integer width, Integer height) {
         if (jpegBytes == null || jpegBytes.length == 0) {
             throw new IllegalArgumentException("empty camera frame");
         }
 
+        long updateStartedAt = System.nanoTime();
         CameraRuntime runtime = runtime(deviceId);
         CameraFrame frame = runtime.updateFrame(new CameraFrame(jpegBytes, width, height, OffsetDateTime.now()));
+        long updateFinishedAt = System.nanoTime();
         logIngestStatsIfDue(deviceId, runtime);
-        notifyFrameListeners(deviceId, frame);
-        writeRecordingFrameIfNeeded(deviceId, runtime, frame);
+        int listenerCount = notifyFrameListeners(deviceId, frame);
+        long notifyFinishedAt = System.nanoTime();
+        boolean recordingActive = writeRecordingFrameIfNeeded(deviceId, runtime, frame);
+        long recordingFinishedAt = System.nanoTime();
+        return new CameraAcceptMetrics(
+                microsBetween(updateStartedAt, updateFinishedAt),
+                microsBetween(updateFinishedAt, notifyFinishedAt),
+                microsBetween(notifyFinishedAt, recordingFinishedAt),
+                listenerCount,
+                recordingActive
+        );
     }
 
     public void updateStatus(String deviceId, CameraStatusRequest request) {
         CameraRuntime runtime = runtime(deviceId);
-        runtime.cameraReady = request.cameraReady() == null || request.cameraReady();
-        runtime.width = request.width();
-        runtime.height = request.height();
-        runtime.statusMessage = request.message();
+        boolean shouldLogStatus;
+        long now = System.currentTimeMillis();
+        synchronized (runtime) {
+            runtime.cameraReady = request.cameraReady() == null || request.cameraReady();
+            runtime.width = request.width();
+            runtime.height = request.height();
+            runtime.statusMessage = request.message();
+            runtime.captureMs = request.captureMs();
+            runtime.uploadMs = request.uploadMs();
+            runtime.totalMs = request.totalMs();
+            runtime.firmwareFrameBytes = request.firmwareFrameBytes();
+            runtime.appliedIntervalMs = request.appliedIntervalMs();
+            runtime.captureFailures = request.captureFailures();
+            runtime.uploadFailures = request.uploadFailures();
+            runtime.cameraStreaming = request.cameraStreaming();
+            runtime.cameraControlReceived = request.cameraControlReceived();
+            runtime.sensorName = request.sensorName();
+            runtime.sensorPid = request.sensorPid();
+            shouldLogStatus = now - runtime.lastStatusLogAt >= STATUS_LOG_INTERVAL.toMillis();
+            if (shouldLogStatus) {
+                runtime.lastStatusLogAt = now;
+            }
+        }
+        if (shouldLogStatus) {
+            log.info("camera status deviceId={} ready={} sensor={}/{} size={}x{} captureMs={} uploadMs={} totalMs={} intervalMs={} frameBytes={} failures={}/{} streaming={} controlReceived={}",
+                    deviceId,
+                    request.cameraReady(),
+                    request.sensorName(),
+                    request.sensorPid() == null ? "-" : String.format(Locale.ROOT, "0x%04X", request.sensorPid()),
+                    request.width(),
+                    request.height(),
+                    request.captureMs(),
+                    request.uploadMs(),
+                    request.totalMs(),
+                    request.appliedIntervalMs(),
+                    request.firmwareFrameBytes(),
+                    request.captureFailures(),
+                    request.uploadFailures(),
+                    request.cameraStreaming(),
+                    request.cameraControlReceived());
+        }
     }
 
     @Transactional(readOnly = true)
@@ -285,16 +338,17 @@ public class CameraService {
         }
     }
 
-    private void notifyFrameListeners(String deviceId, CameraFrame frame) {
+    private int notifyFrameListeners(String deviceId, CameraFrame frame) {
         CopyOnWriteArraySet<Consumer<CameraFramePayload>> listeners = frameListeners.get(deviceId);
         if (listeners == null || listeners.isEmpty()) {
-            return;
+            return 0;
         }
 
         CameraFramePayload payload = toPayload(frame);
         for (Consumer<CameraFramePayload> listener : listeners) {
             listener.accept(payload);
         }
+        return listeners.size();
     }
 
     private CameraFramePayload toPayload(CameraFrame frame) {
@@ -336,13 +390,13 @@ public class CameraService {
         }
     }
 
-    private void writeRecordingFrameIfNeeded(String deviceId, CameraRuntime runtime, CameraFrame frame) {
+    private boolean writeRecordingFrameIfNeeded(String deviceId, CameraRuntime runtime, CameraFrame frame) {
         CameraRecording recording;
         synchronized (runtime) {
             recording = runtime.activeRecording;
         }
         if (recording == null) {
-            return;
+            return false;
         }
 
         synchronized (recording) {
@@ -351,11 +405,16 @@ public class CameraService {
                 Files.write(file, frame.jpegBytes);
                 recording.frameCount++;
                 recording.totalBytes += frame.jpegBytes.length;
+                return true;
             } catch (IOException exception) {
                 runtime.activeRecording = null;
                 throw new IllegalStateException("failed to write recording frame for " + deviceId, exception);
             }
         }
+    }
+
+    private long microsBetween(long startedAt, long finishedAt) {
+        return Math.max(0, (finishedAt - startedAt) / 1000);
     }
 
     private void createRecordingDirectory(CameraRecording recording) {
@@ -408,9 +467,37 @@ public class CameraService {
         CameraRuntime runtime = runtime(device.getDeviceId());
         CameraFrame frame;
         CameraStats stats;
+        boolean cameraReady;
+        Integer width;
+        Integer height;
+        Long captureMs;
+        Long uploadMs;
+        Long totalMs;
+        Long firmwareFrameBytes;
+        Long appliedIntervalMs;
+        Long captureFailures;
+        Long uploadFailures;
+        Boolean cameraStreaming;
+        Boolean cameraControlReceived;
+        String sensorName;
+        Integer sensorPid;
         synchronized (runtime) {
             frame = runtime.latestFrame;
             stats = runtime.stats(System.currentTimeMillis());
+            cameraReady = runtime.cameraReady;
+            width = runtime.width;
+            height = runtime.height;
+            captureMs = runtime.captureMs;
+            uploadMs = runtime.uploadMs;
+            totalMs = runtime.totalMs;
+            firmwareFrameBytes = runtime.firmwareFrameBytes;
+            appliedIntervalMs = runtime.appliedIntervalMs;
+            captureFailures = runtime.captureFailures;
+            uploadFailures = runtime.uploadFailures;
+            cameraStreaming = runtime.cameraStreaming;
+            cameraControlReceived = runtime.cameraControlReceived;
+            sensorName = runtime.sensorName;
+            sensorPid = runtime.sensorPid;
         }
         return new CameraDeviceResponse(
                 device.getDeviceId(),
@@ -419,13 +506,24 @@ public class CameraService {
                 device.getDeviceType(),
                 device.getIp(),
                 isOnline(device),
-                runtime.cameraReady,
+                cameraReady,
                 frame == null ? null : frame.capturedAt,
-                frame == null ? runtime.width : frame.width,
-                frame == null ? runtime.height : frame.height,
+                frame == null ? width : frame.width,
+                frame == null ? height : frame.height,
                 frame == null ? 0 : frame.jpegBytes.length,
                 stats.ingestFps(),
-                stats.lastFrameAgeMs()
+                stats.lastFrameAgeMs(),
+                captureMs,
+                uploadMs,
+                totalMs,
+                firmwareFrameBytes,
+                appliedIntervalMs,
+                captureFailures,
+                uploadFailures,
+                cameraStreaming,
+                cameraControlReceived,
+                sensorName,
+                sensorPid
         );
     }
 
@@ -495,10 +593,22 @@ public class CameraService {
         private Integer width;
         private Integer height;
         private String statusMessage;
+        private Long captureMs;
+        private Long uploadMs;
+        private Long totalMs;
+        private Long firmwareFrameBytes;
+        private Long appliedIntervalMs;
+        private Long captureFailures;
+        private Long uploadFailures;
+        private Boolean cameraStreaming;
+        private Boolean cameraControlReceived;
+        private String sensorName;
+        private Integer sensorPid;
         private CameraRecording activeRecording;
         private final List<CameraRecording> completedRecordings = new ArrayList<>();
         private final Deque<Long> frameReceivedAt = new ArrayDeque<>();
         private long lastStatsLogAt;
+        private long lastStatusLogAt;
 
         private synchronized CameraFrame updateFrame(CameraFrame frame) {
             long now = System.currentTimeMillis();
@@ -545,6 +655,16 @@ public class CameraService {
     }
 
     public record CameraFramePayload(byte[] jpegBytes, Integer width, Integer height, OffsetDateTime capturedAt, long sequence) {
+    }
+
+    public record CameraAcceptMetrics(long updateMicros,
+                                      long notifyMicros,
+                                      long recordingMicros,
+                                      int listenerCount,
+                                      boolean recordingActive) {
+        public long totalMicros() {
+            return updateMicros + notifyMicros + recordingMicros;
+        }
     }
 
     private record CameraStats(double ingestFps, long frameBytes, long lastFrameAgeMs, long sequence) {

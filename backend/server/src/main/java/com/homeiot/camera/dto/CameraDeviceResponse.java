@@ -19,6 +19,17 @@ public record CameraDeviceResponse(
         Integer height,
         long frameBytes,
         double ingestFps,
-        long lastFrameAgeMs
+        long lastFrameAgeMs,
+        Long captureMs,
+        Long uploadMs,
+        Long totalMs,
+        Long firmwareFrameBytes,
+        Long appliedIntervalMs,
+        Long captureFailures,
+        Long uploadFailures,
+        Boolean cameraStreaming,
+        Boolean cameraControlReceived,
+        String sensorName,
+        Integer sensorPid
 ) {
 }
