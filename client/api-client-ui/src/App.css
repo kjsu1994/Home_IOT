@@ -439,10 +439,35 @@ h2 {
   gap: 8px;
 }
 
-.camera-title-actions .active {
+.camera-title-actions .active,
+.camera-render-toggle .active {
   color: #fff;
   border-color: var(--slate-900);
   background: var(--slate-900);
+}
+
+.camera-render-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--slate-200);
+  border-radius: 18px;
+  background: #fff;
+}
+
+.camera-render-toggle button {
+  min-width: 74px;
+  min-height: 42px;
+  border: 0;
+  padding: 0 13px;
+  color: var(--slate-500);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.camera-render-toggle button:disabled {
+  cursor: not-allowed;
 }
 
 .camera-frame {
@@ -467,11 +492,14 @@ h2 {
 .camera-frame canvas {
   aspect-ratio: 4 / 3;
   image-rendering: auto;
+  filter: none;
+}
+
+.camera-frame img {
   filter: contrast(1.04) saturate(1.03);
 }
 
-.camera-frame.display-rotated img,
-.camera-frame.display-rotated canvas {
+.camera-media-rotated {
   transform: rotate(180deg);
 }
 

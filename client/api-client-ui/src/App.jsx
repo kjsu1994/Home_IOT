@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 
 import './App.css'
+import { createCameraRenderer } from './cameraRenderer.js'
 import { clearStoredAuth, fetchJson, hasStoredAuth, patchJson, postJson, resolveApiPath, storeTokens } from './utils/api.js'
 import { createQrSvgDataUri } from './utils/qr.js'
 
 const PENDING_CLAIM_KEY = 'home_iot_pending_claim'
-const CAMERA_CANVAS_MAX_DPR = 2
 
 const UI = {
   shareManagement: '\uacf5\uc720 \uad00\ub9ac',
@@ -1513,6 +1513,7 @@ function CameraPanel({
   onStopRecording,
 }) {
   const [displayRotated, setDisplayRotated] = useState(false)
+  const [renderPreset, setRenderPreset] = useState('sharp')
 
   return (
     <section className="camera-workspace">
@@ -1545,6 +1546,24 @@ function CameraPanel({
         <div className="section-title">
           <span>{selectedCamera?.name || 'Camera stream'}</span>
           <div className="camera-title-actions">
+            <div className="camera-render-toggle" aria-label="Camera render preset">
+              <button
+                className={renderPreset === 'natural' ? 'active' : ''}
+                type="button"
+                disabled={!selectedCamera}
+                onClick={() => setRenderPreset('natural')}
+              >
+                Natural
+              </button>
+              <button
+                className={renderPreset === 'sharp' ? 'active' : ''}
+                type="button"
+                disabled={!selectedCamera}
+                onClick={() => setRenderPreset('sharp')}
+              >
+                Sharp
+              </button>
+            </div>
             <button
               className={`refresh-button ${displayRotated ? 'active' : ''}`}
               type="button"
@@ -1556,7 +1575,12 @@ function CameraPanel({
             <button className="refresh-button" type="button" onClick={onRefresh}>Refresh</button>
           </div>
         </div>
-        <CameraLiveView selectedCamera={selectedCamera} streamPath={streamPath} displayRotated={displayRotated} />
+        <CameraLiveView
+          selectedCamera={selectedCamera}
+          streamPath={streamPath}
+          displayRotated={displayRotated}
+          renderPreset={renderPreset}
+        />
         <div className="camera-meta">
           <Info label="Online" value={selectedCamera?.online ? 'YES' : 'NO'} />
           <Info label="Camera" value={selectedCamera?.cameraReady ? 'READY' : 'WAITING'} />
@@ -1597,65 +1621,147 @@ function CameraPanel({
   )
 }
 
-function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
+function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPreset }) {
   const canvasRef = useRef(null)
+  const renderSettingsRef = useRef({ preset: renderPreset, rotated: displayRotated })
   const [viewerStatus, setViewerStatus] = useState('Waiting')
   const [useMjpegFallback, setUseMjpegFallback] = useState(false)
   const [viewerStats, setViewerStats] = useState({
-    fps: 0,
+    sourceFps: 0,
+    renderFps: 0,
     frameBytes: 0,
     renderedFrames: 0,
+    droppedFrames: 0,
+    decodeMs: 0,
+    renderMs: 0,
+    renderer: '-',
+    gpu: '-',
     lastReceivedAt: '',
   })
 
   useEffect(() => {
+    renderSettingsRef.current = { preset: renderPreset, rotated: displayRotated }
+  }, [displayRotated, renderPreset])
+
+  useEffect(() => {
     setViewerStatus(selectedCamera && streamPath ? 'Connecting' : 'Waiting')
     setUseMjpegFallback(false)
-    setViewerStats({ fps: 0, frameBytes: 0, renderedFrames: 0, lastReceivedAt: '' })
+    setViewerStats({
+      sourceFps: 0,
+      renderFps: 0,
+      frameBytes: 0,
+      renderedFrames: 0,
+      droppedFrames: 0,
+      decodeMs: 0,
+      renderMs: 0,
+      renderer: '-',
+      gpu: '-',
+      lastReceivedAt: '',
+    })
     if (!selectedCamera || !streamPath) {
       return undefined
     }
 
     let stopped = false
     let renderedFrames = 0
-    let pendingObjectUrl = ''
+    let droppedFrames = 0
+    let pendingBlob = null
     let drawing = false
+    let renderer = null
     let lastStatsUpdateAt = 0
+    let currentStats = {
+      sourceFps: 0,
+      renderFps: 0,
+      frameBytes: 0,
+      renderedFrames: 0,
+      droppedFrames: 0,
+      decodeMs: 0,
+      renderMs: 0,
+      renderer: '-',
+      gpu: '-',
+      lastReceivedAt: '',
+    }
     const receivedAtWindow = []
+    const renderedAtWindow = []
     const webSocket = new WebSocket(resolveCameraWebSocketUrl(streamPath))
     webSocket.binaryType = 'blob'
 
-    const drawLatestFrame = () => {
+    const publishStats = (patch, force = false) => {
+      currentStats = { ...currentStats, ...patch }
+      const now = Date.now()
+      if (force || now - lastStatsUpdateAt >= 250) {
+        lastStatsUpdateAt = now
+        setViewerStats(currentStats)
+      }
+    }
+
+    const ensureRenderer = () => {
+      if (renderer) {
+        return renderer
+      }
+      const canvas = canvasRef.current
+      if (!canvas) {
+        return null
+      }
+      renderer = createCameraRenderer(canvas)
+      publishStats({ renderer: renderer.rendererName || 'Canvas2D', gpu: renderer.gpuName || 'unavailable' }, true)
+      return renderer
+    }
+
+    const scheduleDraw = () => {
+      window.requestAnimationFrame(() => {
+        void drawLatestFrame()
+      })
+    }
+
+    const drawLatestFrame = async () => {
       if (stopped) {
         return
       }
-      const objectUrl = pendingObjectUrl
-      pendingObjectUrl = ''
-      if (!objectUrl) {
+      const blob = pendingBlob
+      pendingBlob = null
+      if (!blob) {
         drawing = false
         return
       }
 
       drawing = true
-      const image = new Image()
-      image.onload = () => {
-        const canvas = canvasRef.current
-        const context = canvas?.getContext('2d')
-        if (canvas && context) {
-          drawCameraImage(canvas, context, image)
-          renderedFrames += 1
-          if (renderedFrames === 1) {
-            setViewerStatus('Live')
-          }
+      const frameRenderer = ensureRenderer()
+      if (!frameRenderer) {
+        drawing = false
+        return
+      }
+
+      try {
+        const result = await frameRenderer.render(blob, renderSettingsRef.current)
+        const now = Date.now()
+        renderedFrames += 1
+        pushTimestamp(renderedAtWindow, now)
+        if (renderedFrames === 1) {
+          setViewerStatus('Live')
         }
-        URL.revokeObjectURL(objectUrl)
-        window.requestAnimationFrame(drawLatestFrame)
+        publishStats({
+          renderFps: calculateWindowFps(renderedAtWindow),
+          renderedFrames,
+          droppedFrames,
+          decodeMs: result.decodeMs,
+          renderMs: result.renderMs,
+          renderer: result.renderer,
+          gpu: result.gpu,
+        })
+      } catch (error) {
+        console.warn('Camera frame render failed.', error)
+        if (renderedFrames === 0) {
+          setUseMjpegFallback(true)
+          setViewerStatus('MJPEG fallback')
+        }
+      } finally {
+        if (!stopped && pendingBlob) {
+          scheduleDraw()
+        } else {
+          drawing = false
+        }
       }
-      image.onerror = () => {
-        URL.revokeObjectURL(objectUrl)
-        window.requestAnimationFrame(drawLatestFrame)
-      }
-      image.src = objectUrl
     }
 
     webSocket.onopen = () => {
@@ -1667,29 +1773,21 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
       if (stopped || !(event.data instanceof Blob)) {
         return
       }
-      if (pendingObjectUrl) {
-        URL.revokeObjectURL(pendingObjectUrl)
+      if (pendingBlob) {
+        droppedFrames += 1
       }
       const now = Date.now()
-      receivedAtWindow.push(now)
-      while (receivedAtWindow.length && receivedAtWindow[0] < now - 5000) {
-        receivedAtWindow.shift()
-      }
-      const elapsed = receivedAtWindow.length > 1 ? Math.max(1, receivedAtWindow[receivedAtWindow.length - 1] - receivedAtWindow[0]) : 0
-      const fps = elapsed ? ((receivedAtWindow.length - 1) * 1000) / elapsed : 0
-      if (now - lastStatsUpdateAt >= 250) {
-        lastStatsUpdateAt = now
-        setViewerStats((current) => ({
-          ...current,
-          fps,
-          frameBytes: event.data.size,
-          renderedFrames,
-          lastReceivedAt: new Date(now).toISOString(),
-        }))
-      }
-      pendingObjectUrl = URL.createObjectURL(event.data)
+      pushTimestamp(receivedAtWindow, now)
+      publishStats({
+        sourceFps: calculateWindowFps(receivedAtWindow),
+        frameBytes: event.data.size,
+        renderedFrames,
+        droppedFrames,
+        lastReceivedAt: new Date(now).toISOString(),
+      })
+      pendingBlob = event.data
       if (!drawing) {
-        drawLatestFrame()
+        scheduleDraw()
       }
     }
     webSocket.onerror = () => {
@@ -1707,9 +1805,8 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
 
     return () => {
       stopped = true
-      if (pendingObjectUrl) {
-        URL.revokeObjectURL(pendingObjectUrl)
-      }
+      pendingBlob = null
+      renderer?.destroy?.()
       webSocket.close()
     }
   }, [selectedCamera?.deviceId, streamPath])
@@ -1723,50 +1820,30 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
   }
 
   return (
-    <div className={`camera-frame ${displayRotated ? 'display-rotated' : ''}`}>
+    <div className="camera-frame">
       {useMjpegFallback ? (
-        <img src={streamPath} alt={`${selectedCamera.name || selectedCamera.deviceId} live stream`} />
+        <img
+          className={displayRotated ? 'camera-media-rotated' : ''}
+          src={streamPath}
+          alt={`${selectedCamera.name || selectedCamera.deviceId} live stream`}
+        />
       ) : (
         <canvas ref={canvasRef} aria-label={`${selectedCamera.name || selectedCamera.deviceId} live stream`} />
       )}
       <div className="camera-viewer-status">
         <span>{viewerStatus}</span>
-        <span>{formatFps(viewerStats.fps)} render</span>
+        <span>{formatFps(viewerStats.sourceFps)} source</span>
+        <span>{formatFps(viewerStats.renderFps)} render</span>
         <span>{formatBytes(viewerStats.frameBytes)}</span>
+        <span>{formatMetricMs(viewerStats.decodeMs)} decode</span>
+        <span>{formatMetricMs(viewerStats.renderMs)} draw</span>
+        <span>{viewerStats.renderer}</span>
+        <span title={viewerStats.gpu}>GPU {formatGpuName(viewerStats.gpu)}</span>
+        <span>{viewerStats.droppedFrames} dropped</span>
         <span>{viewerStats.lastReceivedAt ? formatTime(viewerStats.lastReceivedAt) : '-'}</span>
       </div>
     </div>
   )
-}
-
-function drawCameraImage(canvas, context, image) {
-  const bounds = canvas.getBoundingClientRect()
-  const cssWidth = Math.max(1, Math.round(bounds.width || image.naturalWidth))
-  const cssHeight = Math.max(1, Math.round(bounds.height || image.naturalHeight))
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, CAMERA_CANVAS_MAX_DPR)
-  const targetWidth = Math.max(1, Math.round(cssWidth * pixelRatio))
-  const targetHeight = Math.max(1, Math.round(cssHeight * pixelRatio))
-
-  if (canvas.width !== targetWidth) {
-    canvas.width = targetWidth
-  }
-  if (canvas.height !== targetHeight) {
-    canvas.height = targetHeight
-  }
-
-  const scale = Math.min(targetWidth / image.naturalWidth, targetHeight / image.naturalHeight)
-  const drawWidth = Math.round(image.naturalWidth * scale)
-  const drawHeight = Math.round(image.naturalHeight * scale)
-  const drawX = Math.floor((targetWidth - drawWidth) / 2)
-  const drawY = Math.floor((targetHeight - drawHeight) / 2)
-
-  context.setTransform(1, 0, 0, 1, 0, 0)
-  context.clearRect(0, 0, targetWidth, targetHeight)
-  context.fillStyle = '#0f172a'
-  context.fillRect(0, 0, targetWidth, targetHeight)
-  context.imageSmoothingEnabled = true
-  context.imageSmoothingQuality = 'high'
-  context.drawImage(image, drawX, drawY, drawWidth, drawHeight)
 }
 
 function resolveCameraWebSocketUrl(streamPath) {
@@ -1774,6 +1851,21 @@ function resolveCameraWebSocketUrl(streamPath) {
   const url = new URL(path, window.location.href)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   return url.toString()
+}
+
+function pushTimestamp(windowValues, timestamp) {
+  windowValues.push(timestamp)
+  while (windowValues.length && windowValues[0] < timestamp - 5000) {
+    windowValues.shift()
+  }
+}
+
+function calculateWindowFps(windowValues) {
+  if (windowValues.length < 2) {
+    return 0
+  }
+  const elapsed = Math.max(1, windowValues[windowValues.length - 1] - windowValues[0])
+  return ((windowValues.length - 1) * 1000) / elapsed
 }
 
 function formatTime(value) {
@@ -1797,6 +1889,25 @@ function formatFps(value) {
     return '0.0 fps'
   }
   return `${number.toFixed(1)} fps`
+}
+
+function formatMetricMs(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number < 0) {
+    return '-'
+  }
+  if (number < 10) {
+    return `${number.toFixed(1)} ms`
+  }
+  return `${Math.round(number)} ms`
+}
+
+function formatGpuName(value) {
+  if (!value || value === '-') {
+    return '-'
+  }
+  const shortName = String(value).split(' / ').pop() || String(value)
+  return shortName.length > 30 ? `${shortName.slice(0, 27)}...` : shortName
 }
 
 function formatBytes(value) {
