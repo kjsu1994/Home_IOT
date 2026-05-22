@@ -50,11 +50,11 @@ public class CameraService {
     private static final Duration INGEST_LOG_INTERVAL = Duration.ofSeconds(10);
     private static final Duration STATUS_LOG_INTERVAL = Duration.ofSeconds(10);
     private static final String MJPEG_BOUNDARY = "homeiotframe";
-    private static final long LIVE_UPLOAD_INTERVAL_MS = 60;
+    private static final long LIVE_UPLOAD_INTERVAL_MS = 75;
     private static final long IDLE_UPLOAD_INTERVAL_MS = 3000;
-    private static final int LIVE_JPEG_QUALITY = 15;
+    private static final int LIVE_JPEG_QUALITY = 18;
     private static final int IDLE_JPEG_QUALITY = 35;
-    private static final String LIVE_FRAME_SIZE = "VGA";
+    private static final String LIVE_FRAME_SIZE = "SVGA";
     private static final String IDLE_FRAME_SIZE = "QVGA";
 
     private final DeviceRepository deviceRepository;

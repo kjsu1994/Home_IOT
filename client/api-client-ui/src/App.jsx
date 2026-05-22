@@ -5,6 +5,7 @@ import { clearStoredAuth, fetchJson, hasStoredAuth, patchJson, postJson, resolve
 import { createQrSvgDataUri } from './utils/qr.js'
 
 const PENDING_CLAIM_KEY = 'home_iot_pending_claim'
+const CAMERA_CANVAS_MAX_DPR = 2
 
 const UI = {
   shareManagement: '\uacf5\uc720 \uad00\ub9ac',
@@ -1641,13 +1642,7 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
         const canvas = canvasRef.current
         const context = canvas?.getContext('2d')
         if (canvas && context) {
-          if (canvas.width !== image.naturalWidth) {
-            canvas.width = image.naturalWidth
-          }
-          if (canvas.height !== image.naturalHeight) {
-            canvas.height = image.naturalHeight
-          }
-          context.drawImage(image, 0, 0, canvas.width, canvas.height)
+          drawCameraImage(canvas, context, image)
           renderedFrames += 1
           if (renderedFrames === 1) {
             setViewerStatus('Live')
@@ -1742,6 +1737,36 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated }) {
       </div>
     </div>
   )
+}
+
+function drawCameraImage(canvas, context, image) {
+  const bounds = canvas.getBoundingClientRect()
+  const cssWidth = Math.max(1, Math.round(bounds.width || image.naturalWidth))
+  const cssHeight = Math.max(1, Math.round(bounds.height || image.naturalHeight))
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, CAMERA_CANVAS_MAX_DPR)
+  const targetWidth = Math.max(1, Math.round(cssWidth * pixelRatio))
+  const targetHeight = Math.max(1, Math.round(cssHeight * pixelRatio))
+
+  if (canvas.width !== targetWidth) {
+    canvas.width = targetWidth
+  }
+  if (canvas.height !== targetHeight) {
+    canvas.height = targetHeight
+  }
+
+  const scale = Math.min(targetWidth / image.naturalWidth, targetHeight / image.naturalHeight)
+  const drawWidth = Math.round(image.naturalWidth * scale)
+  const drawHeight = Math.round(image.naturalHeight * scale)
+  const drawX = Math.floor((targetWidth - drawWidth) / 2)
+  const drawY = Math.floor((targetHeight - drawHeight) / 2)
+
+  context.setTransform(1, 0, 0, 1, 0, 0)
+  context.clearRect(0, 0, targetWidth, targetHeight)
+  context.fillStyle = '#0f172a'
+  context.fillRect(0, 0, targetWidth, targetHeight)
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(image, drawX, drawY, drawWidth, drawHeight)
 }
 
 function resolveCameraWebSocketUrl(streamPath) {

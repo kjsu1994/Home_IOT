@@ -466,6 +466,8 @@ h2 {
 
 .camera-frame canvas {
   aspect-ratio: 4 / 3;
+  image-rendering: auto;
+  filter: contrast(1.04) saturate(1.03);
 }
 
 .camera-frame.display-rotated img,
