@@ -141,7 +141,7 @@ class WebglCameraRenderer {
 
   draw(source, sourceWidth, sourceHeight, options) {
     const gl = this.gl
-    const target = resolveCanvasTarget(this.canvas, sourceWidth, sourceHeight, this.pixelRatioLimit)
+    const target = resolveCanvasTarget(this.canvas, sourceWidth, sourceHeight, this.pixelRatioLimit, options.fit)
     const preset = RENDER_PRESETS[options.preset] || RENDER_PRESETS.natural
     const tunedPreset = tunePresetForDisplayScale(preset, target.drawWidth / sourceWidth)
     const texCoords = options.rotated ? ROTATED_TEX_COORDS : NATURAL_TEX_COORDS
@@ -229,7 +229,7 @@ class Canvas2dCameraRenderer {
   }
 
   draw(source, sourceWidth, sourceHeight, options) {
-    const target = resolveCanvasTarget(this.canvas, sourceWidth, sourceHeight, this.pixelRatioLimit)
+    const target = resolveCanvasTarget(this.canvas, sourceWidth, sourceHeight, this.pixelRatioLimit, options.fit)
     const context = this.context
     const preset = RENDER_PRESETS[options.preset] || RENDER_PRESETS.natural
 
@@ -287,14 +287,16 @@ async function decodeBlob(blob) {
   }
 }
 
-function resolveCanvasTarget(canvas, sourceWidth, sourceHeight, pixelRatioLimit) {
+function resolveCanvasTarget(canvas, sourceWidth, sourceHeight, pixelRatioLimit, fit = 'contain') {
   const bounds = canvas.getBoundingClientRect()
   const cssWidth = Math.max(1, Math.round(bounds.width || sourceWidth))
   const cssHeight = Math.max(1, Math.round(bounds.height || sourceHeight))
   const pixelRatio = Math.min(window.devicePixelRatio || 1, pixelRatioLimit)
   const width = Math.max(1, Math.round(cssWidth * pixelRatio))
   const height = Math.max(1, Math.round(cssHeight * pixelRatio))
-  const scale = Math.min(width / sourceWidth, height / sourceHeight)
+  const scale = fit === 'cover'
+    ? Math.max(width / sourceWidth, height / sourceHeight)
+    : Math.min(width / sourceWidth, height / sourceHeight)
   const drawWidth = Math.max(1, Math.round(sourceWidth * scale))
   const drawHeight = Math.max(1, Math.round(sourceHeight * scale))
 

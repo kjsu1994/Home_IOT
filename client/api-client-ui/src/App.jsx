@@ -6,6 +6,8 @@ import { clearStoredAuth, fetchJson, hasStoredAuth, patchJson, postJson, resolve
 import { createQrSvgDataUri } from './utils/qr.js'
 
 const PENDING_CLAIM_KEY = 'home_iot_pending_claim'
+const CAMERA_MIN_ZOOM = 1
+const CAMERA_MAX_ZOOM = 4
 
 const UI = {
   shareManagement: '\uacf5\uc720 \uad00\ub9ac',
@@ -1648,11 +1650,15 @@ function CameraPanel({
 function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPreset }) {
   const frameRef = useRef(null)
   const canvasRef = useRef(null)
-  const renderSettingsRef = useRef({ preset: renderPreset, rotated: displayRotated })
+  const pointersRef = useRef(new Map())
+  const gestureRef = useRef(null)
+  const cameraTransformRef = useRef({ scale: 1, x: 0, y: 0 })
+  const renderSettingsRef = useRef({ preset: renderPreset, rotated: displayRotated, fit: 'contain' })
   const [viewerStatus, setViewerStatus] = useState('Waiting')
   const [useMjpegFallback, setUseMjpegFallback] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showStats, setShowStats] = useState(false)
+  const [cameraTransform, setCameraTransform] = useState({ scale: 1, x: 0, y: 0 })
   const [viewerStats, setViewerStats] = useState({
     sourceFps: 0,
     renderFps: 0,
@@ -1666,9 +1672,29 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
     lastReceivedAt: '',
   })
 
+  const applyCameraTransform = (nextTransform) => {
+    const clamped = clampCameraTransform(frameRef.current, nextTransform)
+    cameraTransformRef.current = clamped
+    setCameraTransform(clamped)
+  }
+
+  const resetCameraTransform = () => {
+    pointersRef.current.clear()
+    gestureRef.current = null
+    applyCameraTransform({ scale: 1, x: 0, y: 0 })
+  }
+
   useEffect(() => {
-    renderSettingsRef.current = { preset: renderPreset, rotated: displayRotated }
-  }, [displayRotated, renderPreset])
+    renderSettingsRef.current = {
+      preset: renderPreset,
+      rotated: displayRotated,
+      fit: isFullscreen ? 'cover' : 'contain',
+    }
+  }, [displayRotated, isFullscreen, renderPreset])
+
+  useEffect(() => {
+    resetCameraTransform()
+  }, [isFullscreen, selectedCamera?.deviceId, streamPath])
 
   useEffect(() => {
     const updateFullscreenState = () => {
@@ -1697,6 +1723,127 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
     } catch (error) {
       console.warn('Camera fullscreen failed.', error)
     }
+  }
+
+  const handleCameraPointerDown = (event) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+      return
+    }
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+    if (pointersRef.current.size >= 2) {
+      const [first, second] = Array.from(pointersRef.current.values()).slice(0, 2)
+      gestureRef.current = {
+        type: 'pinch',
+        base: cameraTransformRef.current,
+        distance: distanceBetween(first, second),
+        center: centerBetween(first, second),
+      }
+      return
+    }
+
+    gestureRef.current = {
+      type: 'pan',
+      base: cameraTransformRef.current,
+      start: { x: event.clientX, y: event.clientY },
+    }
+  }
+
+  const handleCameraPointerMove = (event) => {
+    if (!pointersRef.current.has(event.pointerId)) {
+      return
+    }
+    event.preventDefault()
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    const gesture = gestureRef.current
+    if (!gesture) {
+      return
+    }
+
+    if (pointersRef.current.size >= 2 && gesture.type === 'pinch') {
+      const [first, second] = Array.from(pointersRef.current.values()).slice(0, 2)
+      const nextCenter = centerBetween(first, second)
+      const baseScale = Math.max(CAMERA_MIN_ZOOM, gesture.base.scale)
+      const nextScale = clampNumber(
+        gesture.base.scale * (distanceBetween(first, second) / Math.max(1, gesture.distance)),
+        CAMERA_MIN_ZOOM,
+        CAMERA_MAX_ZOOM
+      )
+      const frameBounds = frameRef.current?.getBoundingClientRect()
+      const frameCenter = frameBounds
+        ? { x: frameBounds.left + frameBounds.width / 2, y: frameBounds.top + frameBounds.height / 2 }
+        : gesture.center
+      const scaleChange = nextScale / baseScale
+      applyCameraTransform({
+        scale: nextScale,
+        x: gesture.base.x + (nextCenter.x - gesture.center.x) - (nextCenter.x - frameCenter.x) * (scaleChange - 1),
+        y: gesture.base.y + (nextCenter.y - gesture.center.y) - (nextCenter.y - frameCenter.y) * (scaleChange - 1),
+      })
+      return
+    }
+
+    if (gesture.type === 'pan' && cameraTransformRef.current.scale > 1) {
+      applyCameraTransform({
+        scale: gesture.base.scale,
+        x: gesture.base.x + event.clientX - gesture.start.x,
+        y: gesture.base.y + event.clientY - gesture.start.y,
+      })
+    }
+  }
+
+  const handleCameraPointerEnd = (event) => {
+    pointersRef.current.delete(event.pointerId)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    if (pointersRef.current.size >= 2) {
+      const [first, second] = Array.from(pointersRef.current.values()).slice(0, 2)
+      gestureRef.current = {
+        type: 'pinch',
+        base: cameraTransformRef.current,
+        distance: distanceBetween(first, second),
+        center: centerBetween(first, second),
+      }
+      return
+    }
+
+    if (pointersRef.current.size === 1) {
+      const [remaining] = Array.from(pointersRef.current.values())
+      gestureRef.current = {
+        type: 'pan',
+        base: cameraTransformRef.current,
+        start: remaining,
+      }
+      return
+    }
+
+    gestureRef.current = null
+  }
+
+  const handleCameraWheel = (event) => {
+    if (!event.ctrlKey && !isFullscreen) {
+      return
+    }
+    event.preventDefault()
+    const current = cameraTransformRef.current
+    const nextScale = clampNumber(current.scale * (event.deltaY < 0 ? 1.12 : 0.88), CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM)
+    const frameBounds = frameRef.current?.getBoundingClientRect()
+    const frameCenter = frameBounds
+      ? { x: frameBounds.left + frameBounds.width / 2, y: frameBounds.top + frameBounds.height / 2 }
+      : { x: event.clientX, y: event.clientY }
+    const scaleChange = nextScale / Math.max(CAMERA_MIN_ZOOM, current.scale)
+    applyCameraTransform({
+      scale: nextScale,
+      x: current.x - (event.clientX - frameCenter.x) * (scaleChange - 1),
+      y: current.y - (event.clientY - frameCenter.y) * (scaleChange - 1),
+    })
+  }
+
+  const cameraMediaStyle = {
+    transform: `translate3d(${cameraTransform.x}px, ${cameraTransform.y}px, 0) scale(${cameraTransform.scale})`,
   }
 
   useEffect(() => {
@@ -1976,15 +2123,26 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
       className={`camera-frame ${isFullscreen ? 'fullscreen-active' : ''} ${showStats ? 'stats-visible' : ''}`}
       ref={frameRef}
     >
-      {useMjpegFallback ? (
-        <img
-          className={displayRotated ? 'camera-media-rotated' : ''}
-          src={streamPath}
-          alt={`${selectedCamera.name || selectedCamera.deviceId} live stream`}
-        />
-      ) : (
-        <canvas ref={canvasRef} aria-label={`${selectedCamera.name || selectedCamera.deviceId} live stream`} />
-      )}
+      <div
+        className="camera-gesture-surface"
+        style={cameraMediaStyle}
+        onPointerDown={handleCameraPointerDown}
+        onPointerMove={handleCameraPointerMove}
+        onPointerUp={handleCameraPointerEnd}
+        onPointerCancel={handleCameraPointerEnd}
+        onLostPointerCapture={handleCameraPointerEnd}
+        onWheel={handleCameraWheel}
+      >
+        {useMjpegFallback ? (
+          <img
+            className={displayRotated ? 'camera-media-rotated' : ''}
+            src={streamPath}
+            alt={`${selectedCamera.name || selectedCamera.deviceId} live stream`}
+          />
+        ) : (
+          <canvas ref={canvasRef} aria-label={`${selectedCamera.name || selectedCamera.deviceId} live stream`} />
+        )}
+      </div>
       <div className="camera-viewer-controls">
         <button
           className="camera-viewer-button"
@@ -2016,6 +2174,36 @@ function CameraLiveView({ selectedCamera, streamPath, displayRotated, renderPres
       </div>
     </div>
   )
+}
+
+function clampCameraTransform(frame, transform) {
+  const scale = clampNumber(transform.scale, CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM)
+  if (!frame || scale <= CAMERA_MIN_ZOOM) {
+    return { scale: CAMERA_MIN_ZOOM, x: 0, y: 0 }
+  }
+  const bounds = frame.getBoundingClientRect()
+  const maxX = Math.max(0, (bounds.width * (scale - 1)) / 2)
+  const maxY = Math.max(0, (bounds.height * (scale - 1)) / 2)
+  return {
+    scale,
+    x: clampNumber(transform.x, -maxX, maxX),
+    y: clampNumber(transform.y, -maxY, maxY),
+  }
+}
+
+function distanceBetween(first, second) {
+  return Math.hypot(first.x - second.x, first.y - second.y)
+}
+
+function centerBetween(first, second) {
+  return {
+    x: (first.x + second.x) / 2,
+    y: (first.y + second.y) / 2,
+  }
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value))
 }
 
 function resolveCameraWebSocketUrl(streamPath) {
